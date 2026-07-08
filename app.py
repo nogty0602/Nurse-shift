@@ -117,7 +117,9 @@ if run:
         return f"background-color: {bg}; color: {fg}; text-align:center;"
 
     st.subheader("勤務表")
-    st.dataframe(grid.style.applymap(color), use_container_width=True, height=560)
+    styler = grid.style
+    styler = styler.map(color) if hasattr(styler, "map") else styler.applymap(color)
+    st.dataframe(styler, use_container_width=True, height=560)
     st.markdown("**凡例** ● 深夜 / ー● 日勤深夜 / ▲ 準夜 / ー 日勤 / P 時短 / "
                 "G/-・-/G 外来 / × 休 / 年 年休 / 出 出張")
 
