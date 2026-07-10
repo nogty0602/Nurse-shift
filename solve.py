@@ -1,4 +1,6 @@
 """第1段階 CP-SAT ソルバー本体."""
+import os
+os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
 from ortools.sat.python import cp_model
 from shift_core import (parse, MASTER, OFF, LEAVE, DAY, EVE, NIGHT, OFFSITE,
                         GAI, DAYNIGHT, FIXED, ALLOWED, DAY_REQ, EVE_REQ, NIGHT_REQ, DOW_FRI_MON)

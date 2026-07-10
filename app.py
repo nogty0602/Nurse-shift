@@ -5,6 +5,8 @@
     streamlit run app.py
 """
 import os
+# ortools と streamlit の protobuf(C++)競合によるセグフォルトを回避（純Python実装に固定）
+os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
 import re
 import calendar
 import datetime
