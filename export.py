@@ -12,8 +12,9 @@ FILL = {  # 状態 -> (背景, 文字色)
 DOW_FILL = {"土": "DCE6F1", "日": "F2DCDB"}
 
 
-def export(path, holidays, out):
-    r = solve(path, holidays, time_limit=90)
+def export(path, holidays, out, r=None):
+    if r is None:
+        r = solve(path, holidays, time_limit=90)
     roster = r["data"]["settings"].get("roster", {})
     gairai_cells = r.get("gairai_cells", {})
     A = r["assign"]; days = r["data"]["days"]; dow = r["data"]["dow"]

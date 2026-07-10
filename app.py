@@ -8,6 +8,9 @@ import os
 # ortools と streamlit の protobuf(C++)競合によるセグフォルトを回避（純Python実装に固定）
 os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
 import re
+import sys
+import pickle
+import subprocess
 import calendar
 import datetime
 import tempfile
@@ -21,8 +24,7 @@ try:
 except ImportError:
     HAS_JP = False
 
-from solve import solve
-from export import export
+# 計算は run_solver.py を別プロセスで実行するため、ここで solve/ortools は import しない
 from settings_io import settings_to_rows, write_settings_sheet, TABLE_DEFS, TABLE_ORDER
 from shift_core import (parse_settings, STATE_SYMBOL, OFF, DAY, EVE, NIGHT,
                         DAYNIGHT, GAI)
@@ -141,21 +143,40 @@ if run:
     write_settings_sheet(wb, edited)
     wb.save(tmp_in)
 
-    with st.spinner("シフトを計算中…"):
-        r = solve(tmp_in, holidays, time_limit=time_limit)
+    out_xlsx = os.path.join(tempfile.gettempdir(), "schedule_out.xlsx")
+    result_pkl = os.path.join(tempfile.gettempdir(), "result.pkl")
+    hol_str = ",".join(str(d) for d in sorted(holidays))
+    worker = os.path.join(os.path.dirname(os.path.abspath(__file__)), "run_solver.py")
+    env = dict(os.environ)
+    env["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
 
-    if not r["assign"]:
-        st.error(f"解が見つかりませんでした (status: {r['status']})。制約が厳しすぎる可能性があります。")
+    with st.spinner("シフトを計算中…（別プロセスで実行）"):
+        proc = subprocess.run(
+            [sys.executable, worker, tmp_in, hol_str, str(time_limit), out_xlsx, result_pkl],
+            env=env, capture_output=True, text=True, timeout=int(time_limit) + 180)
+
+    if proc.returncode != 0:
+        st.error("計算プロセスが異常終了しました（メモリ不足や制約過多の可能性）。"
+                 "計算時間を短くする、制約を緩めるなどをお試しください。")
+        if proc.stderr:
+            with st.expander("エラー詳細"):
+                st.code(proc.stderr[-2000:])
         st.stop()
-    st.success(f"生成完了 (status: {r['status']})")
 
-    days = r["data"]["days"]; dow = r["data"]["dow"]; names = r["names"]; lvl = r["lvl"]
-    staff = {s["name"]: s for s in r["data"]["staff"]}
+    with open(result_pkl, "rb") as f:
+        p = pickle.load(f)
+    if not p.get("has_output"):
+        st.error(f"解が見つかりませんでした (status: {p['status']})。制約が厳しすぎる可能性があります。")
+        st.stop()
+    st.success(f"生成完了 (status: {p['status']})")
+
+    days = p["days"]; dow = p["dow"]; names = p["names"]; lvl = p["lvl"]; staff = p["staff"]
+    A = p["assign"]; GC = p["gairai"]
 
     def disp(n, d):
-        stt = r["assign"].get((n, d), OFF)
+        stt = A.get(f"{n}|{d}", OFF)
         if stt == GAI:
-            return r["gairai_cells"].get((n, d), "外")
+            return GC.get(f"{n}|{d}", "外")
         if stt == DAY and staff[n].get("tanshuku"):
             return "P"
         return STATE_SYMBOL.get(stt, "")
@@ -178,25 +199,23 @@ if run:
                 "G/-・-/G 外来 / × 休 / 年 年休 / 出 出張")
 
     def cnt(d, states):
-        return sum(1 for n in names if r["assign"].get((n, d)) in states
+        return sum(1 for n in names if A.get(f"{n}|{d}") in states
                    and staff[n].get("emp") != "師長")
     summ = pd.DataFrame({
         "日勤(実働)": [cnt(d, {DAY, DAYNIGHT}) for d in days],
-        "準夜": [sum(1 for n in names if r["assign"].get((n, d)) == EVE) for d in days],
-        "深夜": [sum(1 for n in names if r["assign"].get((n, d)) in {NIGHT, DAYNIGHT}) for d in days],
-        "外来": [sum(1 for n in names if r["assign"].get((n, d)) == GAI) for d in days],
+        "準夜": [sum(1 for n in names if A.get(f"{n}|{d}") == EVE) for d in days],
+        "深夜": [sum(1 for n in names if A.get(f"{n}|{d}") in {NIGHT, DAYNIGHT}) for d in days],
+        "外来": [sum(1 for n in names if A.get(f"{n}|{d}") == GAI) for d in days],
     }, index=[f"{d}({dow[d]})" for d in days]).T
     st.subheader("日別人数")
     st.dataframe(summ, use_container_width=True)
 
-    if r["warnings"]:
-        with st.expander(f"警告 ({len(r['warnings'])}件)"):
-            for w in r["warnings"]:
+    if p["warnings"]:
+        with st.expander(f"警告 ({len(p['warnings'])}件)"):
+            for w in p["warnings"]:
                 st.write("・" + w)
 
-    tmp_out = os.path.join(tempfile.gettempdir(), "schedule_out.xlsx")
-    export(tmp_in, holidays, tmp_out)
-    with open(tmp_out, "rb") as f:
+    with open(out_xlsx, "rb") as f:
         st.download_button("勤務表(Excel)をダウンロード", f.read(),
                            file_name="勤務表.xlsx",
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
