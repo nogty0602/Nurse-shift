@@ -1,5 +1,6 @@
-streamlit>=1.33
-ortools>=9.10
+streamlit
+ortools>=9.10,<9.13
+numpy>=1.26,<2.3
+pandas>=2.1,<2.3
 openpyxl>=3.1
-pandas>=2.0
-jpholiday>=0.1.10
+jpholiday>=1.0
