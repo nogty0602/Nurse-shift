@@ -9,11 +9,11 @@ from openpyxl.styles import Font, PatternFill
 # 各表の定義: key -> (タイトル, 注記, ヘッダー列, 見出し塗り色)
 TABLE_DEFS = {
     "roles": ("【役割設定】 特別な役割の人だけ記入（チーム・レベル・雇用は希望届から読込）",
-              "役割: サポート必須 / サポート可 / リーダー不可 / 師長 （複数は「・」で区切る）",
-              ["スタッフ", "役割"], "DDEBF7"),
+              "サポート: サポート必須/サポート業務可 ・ リーダー: 可能/不可 ・ 師長: ○",
+              ["スタッフ", "サポート", "リーダー", "師長"], "DDEBF7"),
     "overlap": ("【夜勤 同時不可グループ】 同じ日の夜勤に一緒に入れない人を1行に並べる",
-                "モード欄に「厳守」＝絶対禁止 / 空欄＝回避（強いソフト）",
-                ["グループ名", "メンバー1", "メンバー2", "メンバー3", "メンバー4", "モード"], "DDEBF7"),
+                "メモは任意（自由記入）。モード欄に「厳守」＝絶対禁止 / 空欄＝回避（強いソフト）",
+                ["メモ(任意)", "メンバー1", "メンバー2", "メンバー3", "メンバー4", "モード"], "DDEBF7"),
     "cond": ("【個人の勤務条件】 各シフトの可否・可能曜日を指定",
              "空欄=制限なし / 不可=禁止 / 「金土日月」=その曜日のみ / 「除日」=日曜以外",
              ["スタッフ", "準夜(▲)", "深夜(●)", "日勤(ー)", "備考"], "E2EFDA"),
@@ -44,16 +44,15 @@ def settings_to_rows(settings):
     out = {k: [] for k in TABLE_ORDER}
 
     for n, info in settings.get("roster", {}).items():
-        roles = []
-        if info.get("support_required"): roles.append("サポート必須")
-        if info.get("can_support"): roles.append("サポート可")
-        if info.get("no_leader"): roles.append("リーダー不可")
-        if info.get("chief"): roles.append("師長")
-        out["roles"].append([n, "・".join(roles)])
+        support = ("サポート必須" if info.get("support_required")
+                   else ("サポート業務可" if info.get("can_support") else ""))
+        leader = "不可" if info.get("no_leader") else "可能"
+        chief = "○" if info.get("chief") else ""
+        out["roles"].append([n, support, leader, chief])
 
     for g in settings.get("night_no_overlap", []):
         m = list(g["members"]) + ["", "", "", ""]
-        out["overlap"].append(["同時不可", m[0], m[1], m[2], m[3],
+        out["overlap"].append(["", m[0], m[1], m[2], m[3],
                                "厳守" if g.get("hard") else ""])
 
     for n, r in settings.get("shift_rules", {}).items():

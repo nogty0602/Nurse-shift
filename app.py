@@ -55,9 +55,13 @@ st.subheader("詳細設定")
 st.caption("各表を直接編集できます（行の追加・削除も可）。編集後に左の「シフトを生成」を押してください。")
 
 COLCONF = {
-    "cond": {"準夜(▲)": st.column_config.SelectboxColumn(options=["", "不可"]),
-             "深夜(●)": st.column_config.TextColumn(help="不可 / 金土日月 / 除日 など"),
-             "日勤(ー)": st.column_config.TextColumn(help="不可 / 除土 など")},
+    "roles": {"サポート": st.column_config.SelectboxColumn(
+                  options=["", "サポート必須", "サポート業務可"]),
+              "リーダー": st.column_config.SelectboxColumn(options=["可能", "不可"]),
+              "師長": st.column_config.SelectboxColumn(options=["", "○"])},
+    "cond": {"準夜(▲)": st.column_config.TextColumn(help="不可 / 金土日月 / 除日 など（空欄=制限なし）"),
+             "深夜(●)": st.column_config.TextColumn(help="不可 / 金土日月 / 除日 など（空欄=制限なし）"),
+             "日勤(ー)": st.column_config.TextColumn(help="不可 / 除土 など（空欄=制限なし）")},
     "gairai": {"時間帯": st.column_config.SelectboxColumn(options=["午前", "午後"]),
                "対象週": st.column_config.TextColumn(help="毎週 / 第2・第4 など")},
     "exp": {"希望優先": st.column_config.SelectboxColumn(options=["", "○"])},

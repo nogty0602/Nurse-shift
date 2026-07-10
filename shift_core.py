@@ -304,37 +304,52 @@ def parse_no_daynight(rows, known_names):
 
 
 def parse_roster(rows, known_names):
-    """【役割設定】 スタッフ→役割（＋任意でチーム）を読む。"""
+    """【役割設定】 スタッフ→役割 を読む。
+    新形式(スタッフ|サポート|リーダー|師長) と 旧形式(スタッフ|役割) の両方に対応。"""
     roster = {}
     hdr = None
     col = {}
     for i, row in enumerate(rows):
         cells = [str(v).strip() if v not in (None, "") else "" for v in row]
-        if "スタッフ" in cells and "役割" in cells:
+        if "スタッフ" in cells and ("役割" in cells or "サポート" in cells):
             hdr = i
             for c, v in enumerate(cells):
                 if v == "スタッフ": col["name"] = c
                 elif v == "チーム": col["team"] = c
                 elif v == "役割": col["role"] = c
+                elif "サポート" in v: col["support"] = c
+                elif "リーダー" in v: col["leader"] = c
+                elif "師長" in v: col["chief"] = c
             break
     if hdr is None:
         return roster
+
+    def cell(row, key):
+        return (str(row[col[key]]).strip() if key in col and len(row) > col[key]
+                and row[col[key]] not in (None, "") else "")
+
     for j in range(hdr + 1, len(rows)):
         row = rows[j]
-        nm = str(row[col["name"]]).strip() if len(row) > col["name"] and row[col["name"]] else ""
+        nm = cell(row, "name")
         if nm not in known_names:
             break
-        team = (str(row[col["team"]]).strip() if "team" in col and len(row) > col["team"]
-                and row[col["team"]] not in (None, "") else None)
-        roles = (str(row[col["role"]]).strip() if "role" in col and len(row) > col["role"]
-                 and row[col["role"]] not in (None, "") else "")
-        roster[nm] = dict(
-            team=team or None,
-            support_required=("サポート必須" in roles),
-            can_support=("サポート可" in roles),
-            no_leader=("リーダー不可" in roles),
-            chief=("師長" in roles),
-        )
+        team = cell(row, "team") or None
+        if "role" in col:                              # 旧形式: 役割の文字列を解釈
+            roles = cell(row, "role")
+            roster[nm] = dict(
+                team=team,
+                support_required=("サポート必須" in roles),
+                can_support=("サポート可" in roles or "業務可" in roles),
+                no_leader=("リーダー不可" in roles),
+                chief=("師長" in roles))
+        else:                                          # 新形式: 列ごと
+            sup = cell(row, "support"); ldr = cell(row, "leader"); chf = cell(row, "chief")
+            roster[nm] = dict(
+                team=team,
+                support_required=("必須" in sup),
+                can_support=("業務可" in sup or (("可" in sup) and "必須" not in sup)),
+                no_leader=("不可" in ldr),
+                chief=(chf not in ("", "可能")))
     return roster
 
 
