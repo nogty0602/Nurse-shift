@@ -54,7 +54,7 @@ init_rows = settings_to_rows(parse_settings(wb, staff_names))
 st.subheader("詳細設定")
 st.caption("各表を直接編集できます（行の追加・削除も可）。編集後に左の「シフトを生成」を押してください。")
 
-COND_OPTS = ["", "不可", "金土日月", "月火水木金", "除日", "除土", "除土日"]
+COND_OPTS = ["", "不可", "月火水木金", "金土日月", "土日", "除土", "除日", "除土日"]
 COLCONF = {
     "roles": {"サポート": st.column_config.SelectboxColumn(
                   options=["", "サポート必須", "サポート業務可"]),
@@ -80,6 +80,12 @@ for key in TABLE_ORDER:
     title, note, cols, _ = TABLE_DEFS[key]
     with st.expander(LABELS[key], expanded=(key in ("roles", "gairai", "no_dn"))):
         st.caption(note)
+        if key == "cond":
+            st.markdown(
+                "**選択肢の意味** ＝ 空欄:制限なし / 不可:そのシフト禁止 / "
+                "曜日を並べたもの(例 金土日月・土日):**その曜日だけ可** / "
+                "『除○』(例 除土・除日):**その曜日以外は可**\n\n"
+                "例) 土曜は深夜のみ → 深夜=`除日`, 日勤=`除土`, 準夜=`不可`")
         df = pd.DataFrame(init_rows.get(key, []), columns=cols)
         ed = st.data_editor(df, num_rows="dynamic", use_container_width=True,
                             key=f"ed_{key}", column_config=COLCONF.get(key, {}))
