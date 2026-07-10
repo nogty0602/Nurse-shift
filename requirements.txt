@@ -2,3 +2,4 @@ streamlit>=1.33
 ortools>=9.10
 openpyxl>=3.1
 pandas>=2.0
+jpholiday>=0.1.10

@@ -5,10 +5,19 @@
     streamlit run app.py
 """
 import os
+import re
+import calendar
+import datetime
 import tempfile
 import pandas as pd
 import streamlit as st
 from openpyxl import load_workbook
+
+try:
+    import jpholiday
+    HAS_JP = True
+except ImportError:
+    HAS_JP = False
 
 from solve import solve
 from export import export
@@ -29,7 +38,6 @@ st.title("看護師シフト自動作成")
 with st.sidebar:
     st.header("入力")
     up = st.file_uploader("希望届 (.xlsx)", type=["xlsx"])
-    holidays_txt = st.text_input("祝日(日にちをカンマ区切り)", value="11")
     time_limit = st.slider("計算時間の上限(秒)", 15, 180, 60, step=15)
     run = st.button("シフトを生成", type="primary", use_container_width=True)
 
@@ -50,6 +58,41 @@ if "希望届" in wb.sheetnames:
         if v not in (None, ""):
             staff_names.add(str(v).strip())
 init_rows = settings_to_rows(parse_settings(wb, staff_names))
+
+
+def parse_year_month(wb):
+    title = str(wb["希望届"].cell(1, 1).value or "") if "希望届" in wb.sheetnames else ""
+    m = re.search(r"(\d{4})\s*年\s*(\d{1,2})\s*月", title)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    t = datetime.date.today()
+    return t.year, t.month
+
+
+def auto_holidays(year, month):
+    if not HAS_JP:
+        return []
+    n = calendar.monthrange(year, month)[1]
+    return [d for d in range(1, n + 1)
+            if jpholiday.is_holiday(datetime.date(year, month, d))]
+
+
+# --- 対象年月・祝日 ---
+st.subheader("対象年月・祝日")
+y0, m0 = parse_year_month(wb)
+c1, c2, c3 = st.columns([1, 1, 3])
+year = c1.number_input("年", min_value=2000, max_value=2100, value=y0, step=1)
+month = c2.number_input("月", min_value=1, max_value=12, value=m0, step=1)
+auto = c3.checkbox("祝日を自動判定 (jpholiday)", value=HAS_JP, disabled=not HAS_JP,
+                   help="希望届のタイトルから年月を読み取り、日本の祝日(振替休日含む)を自動判定します。")
+if auto and HAS_JP:
+    ah = auto_holidays(int(year), int(month))
+    names_h = [f"{d}日({jpholiday.is_holiday_name(datetime.date(int(year),int(month),d))})" for d in ah]
+    st.info("自動判定した祝日: " + ("、".join(names_h) if names_h else "なし"))
+    holidays = set(ah)
+else:
+    txt = st.text_input("祝日(日にちをカンマ区切り)", value="")
+    holidays = {int(x) for x in txt.replace("，", ",").split(",") if x.strip().isdigit()}
 
 st.subheader("詳細設定")
 st.caption("各表を直接編集できます（行の追加・削除も可）。編集後に左の「シフトを生成」を押してください。")
@@ -93,11 +136,6 @@ for key in TABLE_ORDER:
         edited[key] = ed.values.tolist()
 
 if run:
-    try:
-        holidays = {int(x) for x in holidays_txt.replace("，", ",").split(",") if x.strip().isdigit()}
-    except ValueError:
-        holidays = set()
-
     write_settings_sheet(wb, edited)
     wb.save(tmp_in)
 
