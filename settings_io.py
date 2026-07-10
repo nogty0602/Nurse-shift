@@ -9,7 +9,7 @@ from openpyxl.styles import Font, PatternFill
 # 各表の定義: key -> (タイトル, 注記, ヘッダー列, 見出し塗り色)
 TABLE_DEFS = {
     "roles": ("【役割設定】 特別な役割の人だけ記入（チーム・レベル・雇用は希望届から読込）",
-              "サポート: サポート必須/サポート業務可 ・ リーダー: 可能/不可 ・ 師長: ○",
+              "スタッフ欄は複数名を「・」区切りで可（例 G・L・R）。サポート: 必須/業務可 ・ リーダー: 可能/不可 ・ 師長: ○",
               ["スタッフ", "サポート", "リーダー", "師長"], "DDEBF7"),
     "overlap": ("【夜勤 同時不可グループ】 同じ日の夜勤に一緒に入れない人を1行に並べる",
                 "メモは任意（自由記入）。モード欄に「厳守」＝絶対禁止 / 空欄＝回避（強いソフト）",
@@ -43,12 +43,15 @@ def settings_to_rows(settings):
     """解析済み settings を、各表の行リスト(dict)に変換。編集UIの初期値に使う。"""
     out = {k: [] for k in TABLE_ORDER}
 
+    role_groups = {}                       # (support, leader, chief) -> [names]
     for n, info in settings.get("roster", {}).items():
         support = ("サポート必須" if info.get("support_required")
                    else ("サポート業務可" if info.get("can_support") else ""))
         leader = "不可" if info.get("no_leader") else "可能"
         chief = "○" if info.get("chief") else ""
-        out["roles"].append([n, support, leader, chief])
+        role_groups.setdefault((support, leader, chief), []).append(n)
+    for (support, leader, chief), members in role_groups.items():
+        out["roles"].append(["・".join(members), support, leader, chief])
 
     for g in settings.get("night_no_overlap", []):
         m = list(g["members"]) + ["", "", "", ""]

@@ -328,15 +328,20 @@ def parse_roster(rows, known_names):
         return (str(row[col[key]]).strip() if key in col and len(row) > col[key]
                 and row[col[key]] not in (None, "") else "")
 
+    def split_names(text):
+        for sep in ("・", "、", ",", "，", "/", "／", " ", "　"):
+            text = text.replace(sep, ",")
+        return [t.strip() for t in text.split(",") if t.strip() in known_names]
+
     for j in range(hdr + 1, len(rows)):
         row = rows[j]
-        nm = cell(row, "name")
-        if nm not in known_names:
+        members = split_names(cell(row, "name"))
+        if not members:                                # 有効な名前が無ければ表の終わり
             break
         team = cell(row, "team") or None
         if "role" in col:                              # 旧形式: 役割の文字列を解釈
             roles = cell(row, "role")
-            roster[nm] = dict(
+            info = dict(
                 team=team,
                 support_required=("サポート必須" in roles),
                 can_support=("サポート可" in roles or "業務可" in roles),
@@ -344,12 +349,14 @@ def parse_roster(rows, known_names):
                 chief=("師長" in roles))
         else:                                          # 新形式: 列ごと
             sup = cell(row, "support"); ldr = cell(row, "leader"); chf = cell(row, "chief")
-            roster[nm] = dict(
+            info = dict(
                 team=team,
                 support_required=("必須" in sup),
                 can_support=("業務可" in sup or (("可" in sup) and "必須" not in sup)),
                 no_leader=("不可" in ldr),
                 chief=(chf not in ("", "可能")))
+        for nm in members:                             # 同じ役割を全員に適用
+            roster[nm] = dict(info)
     return roster
 
 
