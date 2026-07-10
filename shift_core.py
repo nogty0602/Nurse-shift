@@ -13,7 +13,7 @@ STATE_SYMBOL = {OFF: "×", LEAVE: "年", DAY: "ー", EVE: "▲", NIGHT: "●",
 
 # セル記号 -> 固定状態
 FIXED = {"×": OFF, "年": LEAVE, "ー": DAY, "▲": EVE, "●": NIGHT, "出": OFFSITE,
-         "ー●": DAYNIGHT, "G/-": GAI, "-/G": GAI, "ケ/-": DAY, "-/ケ": DAY, "-/2": DAY}
+         "G/-": GAI, "-/G": GAI, "ケ/-": DAY, "-/ケ": DAY, "-/2": DAY}
 # セル記号 -> 許容集合（除外希望）
 ALLOWED = {
     "非●": {EVE, DAY, OFF}, "非▲": {NIGHT, DAY, OFF},
@@ -120,7 +120,8 @@ def parse(path, holidays):
             cells=cells))
     dtype = {d: daytype(dow[d], d in holidays) for d in days}
     settings = parse_settings(wb, {s["name"] for s in staff})
-    return dict(days=days, dow=dow, dtype=dtype, staff=staff, settings=settings)
+    return dict(days=days, dow=dow, dtype=dtype, staff=staff, settings=settings,
+                holidays=set(holidays))
 
 
 def weekday_night_bounds(phase_def):
@@ -223,7 +224,9 @@ def parse_settings(wb, known_names):
     return dict(night_no_overlap=groups, shift_rules=shift_rules,
                 phase_def=phase_def, lv1_exp=lv1_exp, roster=parse_roster(rows, known_names),
                 gairai=parse_gairai(rows, known_names),
-                no_daynight=parse_no_daynight(rows, known_names))
+                no_daynight=parse_no_daynight(rows, known_names),
+                headcount=parse_headcount(rows),
+                night_cap=parse_night_cap(rows, known_names))
 
 
 DOW_ALL = "月火水木金土日"
@@ -240,6 +243,47 @@ def gairai_match_days(days, dow, entry):
             if weeks is None or ordinal in weeks:
                 result.append(d)
     return result
+
+
+def _default_req(dtype, dow_char, is_holiday):
+    """必要人数(FTE)の既定値: (day_lo,day_hi, eve_lo,eve_hi, nig_lo,nig_hi)。"""
+    if is_holiday or dtype == "sat":
+        return (8, 8, 3, 3, 3, 3)
+    if dtype == "sun":
+        return (7, 7, 3, 3, 3, 3)
+    if dow_char == "金":
+        return (9, 9, 3, 3, 3, 3)
+    if dow_char == "火":
+        return (10.5, 11.5, 3, 3, 3, 3)
+    return (10, 11, 3, 3, 3, 3)
+
+
+def resolve_req(headcount, d, dow_char, dtype, is_holiday):
+    """その日の (day,eve,nig) それぞれ [下限,上限] を返す。詳細設定＞既定。"""
+    dl, dh, el, eh, nl, nh = _default_req(dtype, dow_char, is_holiday)
+    req = {"day": [dl, dh], "eve": [el, eh], "nig": [nl, nh]}
+    matched = []
+    for r in headcount or []:
+        t = str(r.get("target", "")).strip()
+        pr = None
+        if t == str(d):
+            pr = 4
+        elif t == "祝" and is_holiday:
+            pr = 3
+        elif t == dow_char:
+            pr = 2
+        elif t == "平日" and dtype == "wd" and not is_holiday:
+            pr = 1
+        if pr is not None:
+            matched.append((pr, r))
+    for pr, r in sorted(matched, key=lambda z: z[0]):
+        for key, field in (("day", "day"), ("eve", "eve"), ("nig", "nig")):
+            lo, hi = r.get(field, (None, None))
+            if lo is not None:
+                req[key][0] = lo
+            if hi is not None:
+                req[key][1] = hi
+    return req
 
 
 def parse_gairai(rows, known_names):
@@ -269,13 +313,17 @@ def parse_gairai(rows, known_names):
         weeks = None                       # None=毎週
         if "毎週" not in wtxt:
             weeks = set()
-            for k, ch in enumerate("１２３４５"):
-                pass
             for num, kanji in ((1, "第1"), (2, "第2"), (3, "第3"), (4, "第4"), (5, "第5")):
                 if kanji in wtxt or f"第{num}" in wtxt:
                     weeks.add(num)
-        out.append(dict(dow=dw, ampm=ampm, weeks=weeks,
-                        staff=staff if staff in known_names else None,
+        pool = []
+        for sep in ("・", "、", ",", "，", "/", "／", " ", "　"):
+            staff = staff.replace(sep, ",")
+        for t in staff.split(","):
+            t = t.strip()
+            if t in known_names and t not in pool:
+                pool.append(t)
+        out.append(dict(dow=dw, ampm=ampm, weeks=weeks, staff=pool,
                         symbol=("G/-" if "午前" in ampm else "-/G")))
     return out
 
@@ -301,6 +349,78 @@ def parse_no_daynight(rows, known_names):
         if all(v in (None, "") for v in row):
             break
     return names
+
+
+def parse_headcount(rows):
+    """【必要人数】 対象ごとの 日勤・準夜・深夜 下限/上限。"""
+    out = []
+    hdr = None; col = {}
+    for i, row in enumerate(rows):
+        cells = [str(v).strip() if v not in (None, "") else "" for v in row]
+        if "対象" in cells and any("日勤" in c for c in cells):
+            hdr = i
+            for c, v in enumerate(cells):
+                if v == "対象": col["target"] = c
+                elif "日勤下限" in v: col["dlo"] = c
+                elif "日勤上限" in v: col["dhi"] = c
+                elif "準夜下限" in v: col["elo"] = c
+                elif "準夜上限" in v: col["ehi"] = c
+                elif "深夜下限" in v: col["nlo"] = c
+                elif "深夜上限" in v: col["nhi"] = c
+            break
+    if hdr is None:
+        return out
+
+    def num(row, key):
+        if key not in col or len(row) <= col[key]:
+            return None
+        try:
+            return float(row[col[key]])
+        except (TypeError, ValueError):
+            return None
+
+    for j in range(hdr + 1, len(rows)):
+        row = rows[j]
+        tgt = (str(row[col["target"]]).strip() if col.get("target") is not None
+               and len(row) > col["target"] and row[col["target"]] not in (None, "") else "")
+        if tgt == "":
+            break
+        out.append(dict(target=tgt,
+                        day=(num(row, "dlo"), num(row, "dhi")),
+                        eve=(num(row, "elo"), num(row, "ehi")),
+                        nig=(num(row, "nlo"), num(row, "nhi"))))
+    return out
+
+
+def parse_night_cap(rows, known_names):
+    """【夜勤上限（1人あたり月）】 対象(全員/スタッフ名) -> 上限回数。"""
+    caps = {}
+    hdr = None; col = {}
+    for i, row in enumerate(rows):
+        cells = [str(v).strip() if v not in (None, "") else "" for v in row]
+        if any(c in ("対象", "スタッフ") for c in cells) and any("夜勤上限" in c for c in cells):
+            hdr = i
+            for c, v in enumerate(cells):
+                if v in ("対象", "スタッフ"): col["name"] = c
+                elif "夜勤上限" in v: col["cap"] = c
+            break
+    if hdr is None:
+        return caps
+    for j in range(hdr + 1, len(rows)):
+        row = rows[j]
+        nm = (str(row[col["name"]]).strip() if col.get("name") is not None
+              and len(row) > col["name"] and row[col["name"]] not in (None, "") else "")
+        if nm == "":
+            break
+        try:
+            cap = int(float(row[col["cap"]]))
+        except (TypeError, ValueError):
+            continue
+        if nm in ("全員", "すべて", "デフォルト"):
+            caps["_default"] = cap
+        elif nm in known_names:
+            caps[nm] = cap
+    return caps
 
 
 def parse_roster(rows, known_names):

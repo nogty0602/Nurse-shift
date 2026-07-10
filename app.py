@@ -73,7 +73,8 @@ COLCONF = {
 LABELS = {"roles": "① 役割設定", "overlap": "② 夜勤 同時不可グループ",
           "cond": "③ 個人の勤務条件", "phase": "④ 夜勤フェーズ定義",
           "exp": "⑤ レベル1 深夜経験回数", "gairai": "⑥ 外来割当",
-          "no_dn": "⑦ 日勤深夜(ー●)不可"}
+          "no_dn": "⑦ 日勤深夜(ー●)不可", "headcount": "⑧ 必要人数(下限/上限)",
+          "night_cap": "⑨ 夜勤上限(1人あたり月)"}
 
 edited = {}
 for key in TABLE_ORDER:

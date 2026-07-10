@@ -29,8 +29,15 @@ TABLE_DEFS = {
     "no_dn": ("【日勤深夜(ー●)不可】 日勤の直後に深夜へ入れない人（深夜の前は休みにする）",
               "ここに載せた人は原則ー●なし。どうしても困難な場合のみ月1回まで許容",
               ["スタッフ"], "F2DCDB"),
+    "headcount": ("【必要人数】 日勤・準夜・深夜の下限/上限（対象ごと）",
+                  "対象=平日/月〜日(曜日)/祝/日付(数字)。日付>祝>曜日>平日 で優先。下限=上限なら固定人数。日勤は0.5可(外来0.5換算)",
+                  ["対象", "日勤下限", "日勤上限", "準夜下限", "準夜上限", "深夜下限", "深夜上限"], "FCE4D6"),
+    "night_cap": ("【夜勤上限（1人あたり月）】 対象=全員 または スタッフ名",
+                  "スタッフ名の行はその人だけ上書き。空なら既定10。",
+                  ["対象", "夜勤上限(月)"], "E2EFDA"),
 }
-TABLE_ORDER = ["roles", "overlap", "cond", "phase", "exp", "gairai", "no_dn"]
+TABLE_ORDER = ["roles", "overlap", "cond", "phase", "exp", "gairai", "no_dn",
+               "headcount", "night_cap"]
 
 
 def _weeks_to_text(weeks):
@@ -69,13 +76,38 @@ def settings_to_rows(settings):
         out["exp"].append([n, e.get("start", 0), "○" if e.get("wish_priority") else ""])
 
     for e in settings.get("gairai", []):
-        if not e.get("dow") or not e.get("staff"):
+        pool = e.get("staff") or []
+        if not e.get("dow") or not pool:
             continue
         out["gairai"].append([e.get("dow", ""), e.get("ampm", "午前"),
-                              _weeks_to_text(e.get("weeks")), e.get("staff") or ""])
+                              _weeks_to_text(e.get("weeks")), "・".join(pool)])
 
     for n in sorted(settings.get("no_daynight", [])):
         out["no_dn"].append([n])
+
+    def _v(x):
+        return "" if x is None else (int(x) if float(x) == int(x) else x)
+    hc = settings.get("headcount", [])
+    if hc:
+        for r in hc:
+            out["headcount"].append([r.get("target", ""),
+                                     _v(r["day"][0]), _v(r["day"][1]),
+                                     _v(r["eve"][0]), _v(r["eve"][1]),
+                                     _v(r["nig"][0]), _v(r["nig"][1])])
+    else:                                   # 既定値を初期表示
+        out["headcount"] = [["平日", 10, 11, 3, 3, 3, 3], ["火", 10.5, 11.5, 3, 3, 3, 3],
+                            ["金", 9, 9, 3, 3, 3, 3], ["土", 8, 8, 3, 3, 3, 3],
+                            ["日", 7, 7, 3, 3, 3, 3], ["祝", 8, 8, 3, 3, 3, 3]]
+
+    ncap = settings.get("night_cap", {})
+    if ncap:
+        if "_default" in ncap:
+            out["night_cap"].append(["全員", ncap["_default"]])
+        for n, c in ncap.items():
+            if n != "_default":
+                out["night_cap"].append([n, c])
+    else:
+        out["night_cap"] = [["全員", 10]]
 
     return out
 

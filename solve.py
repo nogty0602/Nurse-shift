@@ -106,6 +106,7 @@ def solve(path, holidays, time_limit=60):
     phase_soft = {n for n in phase_names if not wish_prio[n]}
     no_daynight = data["settings"].get("no_daynight", set())
     gairai = data["settings"].get("gairai", [])
+    holidays = data.get("holidays", set())
     cells_of = {s["name"]: s["cells"] for s in staff}
 
     from shift_core import GAI, DAYNIGHT, gairai_match_days
@@ -120,9 +121,6 @@ def solve(path, holidays, time_limit=60):
             sym = s["cells"].get(d, "")
             al, w = build_allowed(n, dtype[d], dow[d], sym, shift_rules,
                                   frozenset(phase_soft), attr[n]["chief"])
-            # 空欄で、深夜可能かつ日勤可能なら「日勤深夜(ー●)」も選択肢に（Lv2以上）
-            if sym == "" and NIGHT in al and DAY in al and s["level"] >= 2:
-                al = al | {DAYNIGHT}
             allowed[(n, d)] = al
             if w:
                 warnings.append(f"D{d} {w}")
@@ -131,19 +129,26 @@ def solve(path, holidays, time_limit=60):
             if n in phase_names and n not in phase_soft and sym == "●":
                 honored_wish.add((n, d))       # 希望優先○：フェーズ制約をこの日はかけない
 
-    # 外来割当：担当者を外来日にGAI固定（衝突する固定希望があればスキップ）
+    # 外来割当：各エントリのプールから1日1名をGAIに（回数はプール内で均等化）
     gairai_cells = {}
+    gairai_slots = []       # (pool, days, symbol)
     for e in gairai:
-        n = e.get("staff")
-        if not n or n not in names:
+        pool = [n for n in (e.get("staff") or []) if n in names]
+        if not pool:
             continue
-        for d in gairai_match_days(days, dow, e):
-            wish = cells_of.get(n, {}).get(d, "")
-            if wish in ("×", "●", "▲", "年", "出", "ー●"):
-                warnings.append(f"D{d} {n}:外来希望と本人希望({wish})が衝突→本人希望を優先")
-                continue
-            allowed[(n, d)] = {GAI}
-            gairai_cells[(n, d)] = e["symbol"]
+        gdays = [d for d in gairai_match_days(days, dow, e) if d not in holidays]
+        avail = {}
+        for d in gdays:
+            cand = []
+            for n in pool:
+                wish = cells_of.get(n, {}).get(d, "")
+                if wish in ("×", "●", "▲", "年", "出"):
+                    continue                       # 本人希望を優先し外来対象外
+                allowed[(n, d)] = allowed[(n, d)] | {GAI}
+                gairai_cells[(n, d)] = e["symbol"]
+                cand.append(n)
+            avail[d] = cand
+        gairai_slots.append((pool, gdays, avail))
 
     mdl = cp_model.CpModel()
     x = {}
@@ -178,20 +183,17 @@ def solve(path, holidays, time_limit=60):
     def slack(name, w):
         v = mdl.NewIntVar(0, 99, name); pen.append((w, v)); return v
 
-    def day_req_half(d):
-        """日勤の必要人数を半単位(FTE×2)で返す (下限)。"""
-        if dtype[d] == "sat": return 16
-        if dtype[d] == "sun": return 14
-        if dow[d] == "金": return 18          # 9名
-        if dow[d] == "火": return 21          # 10.5名(外来0.5含む)
-        return 20                             # 10名
+    from shift_core import resolve_req
+    headcount = data["settings"].get("headcount", [])
+    holidays = data.get("holidays", set())
 
     def deep_vars(n, d):
         return [x[(n, d, st)] for st in (NIGHT, DAYNIGHT) if (n, d, st) in x]
 
     for d in days:
-        # --- 日勤(半単位: ー・ー●=2, 外来=1) ---
-        lo = day_req_half(d)
+        req = resolve_req(headcount, d, dow[d], dtype[d], d in holidays)
+        # --- 日勤(半単位: ー=2, 外来=1) 下限loH〜上限hiH ---
+        loH = int(round(req["day"][0] * 2)); hiH = int(round(req["day"][1] * 2))
         day_terms = []
         for n in names:
             if is_chief[n]:
@@ -200,19 +202,20 @@ def solve(path, holidays, time_limit=60):
                 if (n, d, st) in x:
                     day_terms.append(coef * x[(n, d, st)])
         sh = slack(f"dsh{d}", 1000); ov = slack(f"dov{d}", 2)
-        mdl.Add(sum(day_terms) + sh >= lo)
-        if dtype[d] == "wd" and dow[d] == "火":
-            mdl.Add(sum(day_terms) <= 23)     # 火 上限11.5
-        mdl.Add(sum(day_terms) - ov <= lo)    # 目標loに寄せる（超過は軽ペナルティ）
+        mdl.Add(sum(day_terms) + sh >= loH)
+        mdl.Add(sum(day_terms) <= hiH)               # 上限（ハード）
+        mdl.Add(sum(day_terms) - ov <= loH)          # 目標loに寄せる（超過は軽ペナルティ）
 
-        # --- 準夜(EVE) 3名 ---
+        # --- 準夜(EVE) ---
+        e_lo, e_hi = int(req["eve"][0]), int(req["eve"][1])
         ev = [x[(n, d, EVE)] for n in names if (n, d, EVE) in x]
         se = slack(f"esh{d}", 1000)
-        mdl.Add(sum(ev) <= 3); mdl.Add(sum(ev) + se >= 3)
-        # --- 深夜(deep = ● + ー●) 3名 ---
+        mdl.Add(sum(ev) <= e_hi); mdl.Add(sum(ev) + se >= e_lo)
+        # --- 深夜(deep = ● + ー●) ---
+        n_lo, n_hi = int(req["nig"][0]), int(req["nig"][1])
         deepall = [v for n in names for v in deep_vars(n, d)]
         sn = slack(f"nsh{d}", 1000)
-        mdl.Add(sum(deepall) <= 3); mdl.Add(sum(deepall) + sn >= 3)
+        mdl.Add(sum(deepall) <= n_hi); mdl.Add(sum(deepall) + sn >= n_lo)
 
         # 準夜・深夜 共通のチーム/Lv1/リーダー
         for label, per in (("e", lambda n: [x[(n, d, EVE)]] if (n, d, EVE) in x else []),
@@ -252,6 +255,22 @@ def solve(path, holidays, time_limit=60):
         if d_l1:
             sp = slack(f"pair{d}", 500)
             mdl.Add(sum(d_l1) <= sum(d_l3) + sp)
+
+    # 外来：各外来日は1名（プールから）／回数はプール内で均等化
+    for gi, (pool, gdays, avail) in enumerate(gairai_slots):
+        for d in gdays:
+            cand = [x[(n, d, GAI)] for n in avail.get(d, []) if (n, d, GAI) in x]
+            if cand:
+                short = slack(f"gsh{gi}_{d}", 900)
+                mdl.Add(sum(cand) + short == 1)          # ちょうど1名（埋まらない時のみ緩和）
+        base = len(gdays) // len(pool) if pool else 0
+        for n in pool:
+            cnt = [x[(n, d, GAI)] for d in gdays if (n, d, GAI) in x]
+            if not cnt:
+                continue
+            hi = slack(f"ghi{gi}_{n}", 30); lo = slack(f"glo{gi}_{n}", 30)
+            mdl.Add(sum(cnt) - hi <= base + 1)           # 最大 ceil
+            mdl.Add(sum(cnt) + lo >= base)               # 最小 floor
 
     # 夜勤重複回避（詳細設定シートの「同時不可グループ」）
     # 各グループ内の全ペアを対象。厳守=ハード、それ以外=強いソフト(重み300)。
@@ -306,11 +325,26 @@ def solve(path, holidays, time_limit=60):
             pen.append((40, x[(n, d, OFF)]))
 
     # 並び順・連勤（日ごと隣接）
+    dnpat_by_day = {}     # ●の日 -> その日にー●となる人のz変数
     for n in names:
+        if is_chief[n]:                           # 師長は勤務固定のため対象外
+            continue
+        nb = {}                                   # nb[d]=1 ⇔ その日が夜勤(▲/●)
+        for d in days:
+            h = has(n, d, NIGHTS)
+            v = mdl.NewBoolVar(f"nb_{n}_{d}")
+            mdl.Add(v == (sum(h) if h else 0))
+            nb[d] = v
         for i, d in enumerate(days):
             nd = days[i + 1] if i + 1 < len(days) else None
             nd2 = days[i + 2] if i + 2 < len(days) else None
             night_d = has(n, d, NIGHTS)
+            # 【ルール3】夜勤は連続が基本：孤立した単発夜勤に軽いペナルティ
+            prev = nb[days[i - 1]] if i > 0 else 0
+            nxt = nb[days[i + 1]] if i + 1 < len(days) else 0
+            iso = mdl.NewBoolVar(f"iso_{n}_{d}")
+            mdl.Add(iso >= nb[d] - prev - nxt)
+            pen.append((8, iso))
             if nd is not None:
                 # 夜勤の翌日は 日勤系(ー/ー●/外来/出張) にしない（＝明け休みか夜勤のみ）
                 for st in (DAY, DAYNIGHT, GAI, OFFSITE):
@@ -343,33 +377,41 @@ def solve(path, holidays, time_limit=60):
             if win:
                 mdl.Add(sum(win) <= 5)
 
-        # 日勤深夜(ー●) 個人上限：可＝月2回、不可＝月1回まで（強く penalize）
-        dn = [x[(n, d, DAYNIGHT)] for d in days if (n, d, DAYNIGHT) in x]
-        if dn:
+        # 【ルール4】日勤(ー・外来)は連続4回まで（5連続禁止）
+        for i in range(len(days) - 4):
+            dwin = []
+            for j in range(5):
+                dwin += has(n, days[i + j], {DAY, GAI})
+            if dwin:
+                sd = slack(f"dayrun_{n}_{i}", 400)
+                mdl.Add(sum(dwin) - sd <= 4)
+
+        # 【ルール2】日勤深夜(ー●)＝ ー(d) の翌日 ●(d+1)。回数を制限。
+        dnpat = []            # DAY(d) かつ NIGHT(d+1) の指示変数
+        for i in range(len(days) - 1):
+            d, nd = days[i], days[i + 1]
+            if (n, d, DAY) in x and (n, nd, NIGHT) in x:
+                z = mdl.NewBoolVar(f"dnp_{n}_{d}")
+                mdl.Add(z <= x[(n, d, DAY)]); mdl.Add(z <= x[(n, nd, NIGHT)])
+                mdl.Add(z >= x[(n, d, DAY)] + x[(n, nd, NIGHT)] - 1)
+                dnpat.append((nd, z))
+                dnpat_by_day.setdefault(nd, []).append(z)
+        if dnpat:
+            zs = [z for _, z in dnpat]
             if n in no_daynight:
-                mdl.Add(sum(dn) <= 1)
-                for v in dn:
-                    pen.append((300, v))       # ー●不可者はほぼ0に
+                mdl.Add(sum(zs) <= 1)                 # ー●不可者：原則0（月1回まで）
+                for z in zs:
+                    pen.append((300, z))
             else:
-                mdl.Add(sum(dn) <= 2)
-        # ー●不可者の単独深夜(●)は前日を休みにする
-        if n in no_daynight:
-            for i, d in enumerate(days):
-                if i == 0 or (n, d, NIGHT) not in x:
-                    continue
-                pv = has(n, days[i - 1], REST)
-                if pv:
-                    mdl.Add(x[(n, d, NIGHT)] <= sum(pv))
-                else:
-                    mdl.Add(x[(n, d, NIGHT)] == 0)
+                mdl.Add(sum(zs) <= 2)                 # 個人 月2回まで（ハード）
 
-    # 日勤深夜(ー●) は1日あたり最大2名（病棟全体）
-    for d in days:
-        dnd = [x[(n, d, DAYNIGHT)] for n in names if (n, d, DAYNIGHT) in x]
-        if dnd:
-            mdl.Add(sum(dnd) <= 2)
+    # 【ルール2】ー●（日勤→翌深夜）は1日あたり最大2名（病棟全体・ハード）
+    for nd, zs in dnpat_by_day.items():
+        if zs:
+            mdl.Add(sum(zs) <= 2)
 
-    # 夜勤回数の均等化（8〜10, 対象=night_cap）
+    # 夜勤回数の均等化＋上限（上限は詳細設定で変更可、既定10）
+    ncap = data["settings"].get("night_cap", {})
     for n in night_cap:
         nc = mdl.NewIntVar(0, 31, f"nc_{n}")
         terms = []
@@ -378,8 +420,10 @@ def solve(path, holidays, time_limit=60):
             if (n, d, NIGHT) in x: terms.append(x[(n, d, NIGHT)])
             if (n, d, DAYNIGHT) in x: terms.append(x[(n, d, DAYNIGHT)])
         mdl.Add(nc == sum(terms))
-        hi = slack(f"nhi_{n}", 20); lo = slack(f"nlo_{n}", 15)
-        mdl.Add(nc - hi <= 10); mdl.Add(nc + lo >= 8)
+        cap = ncap.get(n, ncap.get("_default", 10))
+        mdl.Add(nc <= cap)                       # 上限（ハード）
+        lo = slack(f"nlo_{n}", 15)
+        mdl.Add(nc + lo >= min(8, cap))          # 下限8の目安（上限が8未満なら緩和）
 
     # 【項目6】休み数基準：週休は月内に消費（各人 休(OFF) ≧ 月の土日祝数 を目安）。
     # 夜勤明けの休みは並び順ルールで自動付与されるため、ここでは週休の下限のみをソフトで確保。
@@ -450,6 +494,15 @@ def solve(path, holidays, time_limit=60):
         for (n, d) in soft_night_wish:
             if assign.get((n, d)) != NIGHT:
                 warnings.append(f"D{d} {n}:●希望はフェーズ未解禁のため休みに変更")
+        # 日勤5連続（ルール4超過）を警告（師長は対象外）
+        for n in names:
+            if is_chief[n]:
+                continue
+            run = 0
+            for d in days:
+                run = run + 1 if assign.get((n, d)) in (DAY, GAI) else 0
+                if run == 5:
+                    warnings.append(f"D{d} {n}:日勤が5連続（4連続上限の超過）")
     return dict(status=status, obj=solver.ObjectiveValue() if assign else None,
                 assign=assign, data=data, names=names, lvl=lvl,
                 warnings=warnings, gairai_cells=gairai_cells)
