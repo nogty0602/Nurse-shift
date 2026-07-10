@@ -54,15 +54,18 @@ init_rows = settings_to_rows(parse_settings(wb, staff_names))
 st.subheader("詳細設定")
 st.caption("各表を直接編集できます（行の追加・削除も可）。編集後に左の「シフトを生成」を押してください。")
 
+COND_OPTS = ["", "不可", "金土日月", "月火水木金", "除日", "除土", "除土日"]
 COLCONF = {
     "roles": {"サポート": st.column_config.SelectboxColumn(
                   options=["", "サポート必須", "サポート業務可"]),
               "リーダー": st.column_config.SelectboxColumn(options=["可能", "不可"]),
               "師長": st.column_config.SelectboxColumn(options=["", "○"])},
-    "cond": {"準夜(▲)": st.column_config.TextColumn(help="不可 / 金土日月 / 除日 など（空欄=制限なし）"),
-             "深夜(●)": st.column_config.TextColumn(help="不可 / 金土日月 / 除日 など（空欄=制限なし）"),
-             "日勤(ー)": st.column_config.TextColumn(help="不可 / 除土 など（空欄=制限なし）")},
-    "gairai": {"時間帯": st.column_config.SelectboxColumn(options=["午前", "午後"]),
+    "cond": {"準夜(▲)": st.column_config.SelectboxColumn(options=COND_OPTS,
+                 help="不可＝そのシフト禁止 / 空欄＝制限なし / 曜日＝その曜日のみ・除○＝その曜日以外"),
+             "深夜(●)": st.column_config.SelectboxColumn(options=COND_OPTS),
+             "日勤(ー)": st.column_config.SelectboxColumn(options=COND_OPTS)},
+    "gairai": {"曜日": st.column_config.SelectboxColumn(options=["月", "火", "水", "木", "金"]),
+               "時間帯": st.column_config.SelectboxColumn(options=["午前", "午後"]),
                "対象週": st.column_config.TextColumn(help="毎週 / 第2・第4 など")},
     "exp": {"希望優先": st.column_config.SelectboxColumn(options=["", "○"])},
     "overlap": {"モード": st.column_config.SelectboxColumn(options=["", "厳守"])},
