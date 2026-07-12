@@ -35,9 +35,12 @@ TABLE_DEFS = {
     "night_cap": ("【夜勤上限（1人あたり月）】 対象=全員 または スタッフ名",
                   "スタッフ名の行はその人だけ上書き。空なら既定10。",
                   ["対象", "夜勤上限(月)"], "E2EFDA"),
+    "rest": ("【休日数（1人あたり月）】 対象=全員 または スタッフ名",
+             "最低休日数=その月に必要な休みの日数（週休＋祝日分）。年休を含めるかを選べます。",
+             ["対象", "最低休日数", "年休を含める"], "DDEBF7"),
 }
 TABLE_ORDER = ["roles", "overlap", "cond", "phase", "exp", "gairai", "no_dn",
-               "headcount", "night_cap"]
+               "headcount", "night_cap", "rest"]
 
 
 def _weeks_to_text(weeks):
@@ -110,6 +113,17 @@ def settings_to_rows(settings):
                 out["night_cap"].append([n, c])
     else:
         out["night_cap"] = [["全員", 10]]
+
+    rest = settings.get("rest_days", {})
+    if rest:
+        if "_default" in rest:
+            r0 = rest["_default"]
+            out["rest"].append(["全員", r0["min"], "○" if r0["include_leave"] else ""])
+        for n, r0 in rest.items():
+            if n != "_default":
+                out["rest"].append([n, r0["min"], "○" if r0["include_leave"] else ""])
+    else:
+        out["rest"] = [["全員", 11, "○"]]
 
     return out
 

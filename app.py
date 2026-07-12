@@ -116,12 +116,14 @@ COLCONF = {
                "対象週": st.column_config.TextColumn(help="毎週 / 第2・第4 など")},
     "exp": {"希望優先": st.column_config.SelectboxColumn(options=["", "○"])},
     "overlap": {"モード": st.column_config.SelectboxColumn(options=["", "厳守"])},
+    "rest": {"年休を含める": st.column_config.SelectboxColumn(options=["○", ""],
+                 help="○=年休(年)も休日数に数える / 空欄=×(休)のみで数える")},
 }
 LABELS = {"roles": "① 役割設定", "overlap": "② 夜勤 同時不可グループ",
           "cond": "③ 個人の勤務条件", "phase": "④ 夜勤フェーズ定義",
           "exp": "⑤ レベル1 深夜経験回数", "gairai": "⑥ 外来割当",
           "no_dn": "⑦ 日勤深夜(ー●)不可", "headcount": "⑧ 必要人数(下限/上限)",
-          "night_cap": "⑨ 夜勤上限(1人あたり月)"}
+          "night_cap": "⑨ 夜勤上限(1人あたり月)", "rest": "⑩ 休日数(1人あたり月)"}
 
 edited = {}
 for key in TABLE_ORDER:

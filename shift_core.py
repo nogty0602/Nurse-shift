@@ -226,7 +226,8 @@ def parse_settings(wb, known_names):
                 gairai=parse_gairai(rows, known_names),
                 no_daynight=parse_no_daynight(rows, known_names),
                 headcount=parse_headcount(rows),
-                night_cap=parse_night_cap(rows, known_names))
+                night_cap=parse_night_cap(rows, known_names),
+                rest_days=parse_rest_days(rows, known_names))
 
 
 DOW_ALL = "月火水木金土日"
@@ -389,6 +390,42 @@ def parse_headcount(rows):
                         day=(num(row, "dlo"), num(row, "dhi")),
                         eve=(num(row, "elo"), num(row, "ehi")),
                         nig=(num(row, "nlo"), num(row, "nhi"))))
+    return out
+
+
+def parse_rest_days(rows, known_names):
+    """【休日数（1人あたり月）】 対象 -> dict(min=最低休日数, include_leave=年休を含めるか)。"""
+    out = {}
+    hdr = None; col = {}
+    for i, row in enumerate(rows):
+        cells = [str(v).strip() if v not in (None, "") else "" for v in row]
+        if any(c in ("対象", "スタッフ") for c in cells) and any("最低休日数" in c for c in cells):
+            hdr = i
+            for c, v in enumerate(cells):
+                if v in ("対象", "スタッフ"): col["name"] = c
+                elif "最低休日数" in v: col["min"] = c
+                elif "年休" in v: col["leave"] = c
+            break
+    if hdr is None:
+        return out
+    for j in range(hdr + 1, len(rows)):
+        row = rows[j]
+        nm = (str(row[col["name"]]).strip() if col.get("name") is not None
+              and len(row) > col["name"] and row[col["name"]] not in (None, "") else "")
+        if nm == "":
+            break
+        try:
+            mn = int(float(row[col["min"]]))
+        except (TypeError, ValueError):
+            continue
+        inc = ""
+        if "leave" in col and len(row) > col["leave"] and row[col["leave"]] not in (None, ""):
+            inc = str(row[col["leave"]]).strip()
+        rec = dict(min=mn, include_leave=(inc not in ("", "×", "含めない")))
+        if nm in ("全員", "すべて", "デフォルト"):
+            out["_default"] = rec
+        elif nm in known_names:
+            out[nm] = rec
     return out
 
 

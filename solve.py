@@ -529,19 +529,24 @@ def solve(path, holidays, time_limit=60):
         lo = slack(f"nlo_{n}", 15)
         mdl.Add(nc + lo >= min(8, cap))          # 下限8の目安（上限が8未満なら緩和）
 
-    # 【項目6】休み数基準：週休は月内に消費（各人 休(OFF) ≧ 月の土日祝数 を目安）。
-    # 夜勤明けの休みは並び順ルールで自動付与されるため、ここでは週休の下限のみをソフトで確保。
-    W = sum(1 for d in days if dtype[d] in ("sat", "sun"))
+    # 【休日数】詳細設定の「最低休日数」を確保（既定＝月の土日祝数）
+    rest_cfg = data["settings"].get("rest_days", {})
+    W = sum(1 for d in days if dtype[d] in ("sat", "sun") or d in holidays)
     for n in names:
         if is_chief[n]:
             continue
-        offs = [x[(n, d, OFF)] for d in days if (n, d, OFF) in x]
-        if not offs:
+        cfg = rest_cfg.get(n, rest_cfg.get("_default", {}))
+        need = cfg.get("min", W)
+        include_leave = cfg.get("include_leave", True)
+        rvars = [x[(n, d, OFF)] for d in days if (n, d, OFF) in x]
+        if include_leave:                      # 年休も休みに数える
+            rvars += [x[(n, d, LEAVE)] for d in days if (n, d, LEAVE) in x]
+        if not rvars:
             continue
         oc = mdl.NewIntVar(0, 31, f"off_{n}")
-        mdl.Add(oc == sum(offs))
-        dlo = slack(f"olo_{n}", 8)          # 週休が土日祝数を下回るぶんを軽く penalize
-        mdl.Add(oc + dlo >= W)
+        mdl.Add(oc == sum(rvars))
+        dlo = slack(f"olo_{n}", 2000)          # 休日数不足は強く penalize
+        mdl.Add(oc + dlo >= need)
 
     # 【追加】月に最低2回の2連休（5連休以上を取得している場合は免除）ソフト
     for n in names:
