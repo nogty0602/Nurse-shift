@@ -63,9 +63,20 @@ def solve(path, holidays, time_limit=60):
     days, dtype, dow = data["days"], data["dtype"], data["dow"]
     staff = data["staff"]
     names = [s["name"] for s in staff]
-    lvl = {s["name"]: s["level"] for s in staff}
+    lvl = {}
+    lvl_missing = []
+    for s in staff:
+        v = s["level"]
+        if v is None:
+            lvl[s["name"]] = 1          # レベル未入力は暫定で1として扱う
+            lvl_missing.append(s["name"])
+        else:
+            lvl[s["name"]] = v
     idx = {n: i for i, n in enumerate(names)}
     warnings = []
+    if lvl_missing:
+        warnings.append("レベル未入力のため暫定でLv1として扱いました: " + "、".join(lvl_missing)
+                        + "（希望届のレベル欄に数字を入力してください）")
     shift_rules = data["settings"].get("shift_rules", {})
     phase_def = data["settings"].get("phase_def", [])
     lv1_exp = data["settings"].get("lv1_exp", {})
@@ -131,9 +142,60 @@ def solve(path, holidays, time_limit=60):
             if n in phase_names and n not in phase_soft and sym == "●":
                 honored_wish.add((n, d))       # 希望優先○：フェーズ制約をこの日はかけない
 
+    # 【固定ルール】希望休(×)の前日は準夜(▲)不可 / 翌日は深夜(●)不可
+    # ※本人が書いた ▲/● 希望よりルールを優先し、その日は休みに変更する
+    for s in staff:
+        n = s["name"]
+        if attr[n]["chief"]:
+            continue
+        for i, d in enumerate(days):
+            if s["cells"].get(d, "") != "×":
+                continue
+            if i > 0:                                    # 前日: 準夜を除外
+                pd = days[i - 1]
+                if EVE in allowed[(n, pd)]:
+                    al = allowed[(n, pd)] - {EVE}
+                    if not al:
+                        al = {OFF}
+                        warnings.append(f"D{pd} {n}:×の前日のため準夜希望を休みに変更")
+                    allowed[(n, pd)] = al
+            if i + 1 < len(days):                        # 翌日: 深夜を除外
+                nd_ = days[i + 1]
+                if NIGHT in allowed[(n, nd_)] or DAYNIGHT in allowed[(n, nd_)]:
+                    al = allowed[(n, nd_)] - {NIGHT, DAYNIGHT}
+                    if not al:
+                        al = {OFF}
+                        warnings.append(f"D{nd_} {n}:×の翌日のため深夜希望を休みに変更")
+                    allowed[(n, nd_)] = al
+
     # 外来割当：各エントリのプールから1日1名をGAIに（回数はプール内で均等化）
     gairai_cells = {}
-    gairai_slots = []       # (pool, days, symbol)
+    gairai_slots = []       # (pool, days, avail)
+
+    # 本人が希望届に外来記号(G/- , -/G)を記入している日は、その日を外来として確定し
+    # その日は他の人を外来に入れない（外来は1日1名）。
+    # 記号は詳細設定の時間帯(午前/午後)に合わせて自動補正する。
+    sym_by_day = {}                 # day -> 設定上の記号(午前/午後)
+    for e in gairai:
+        for d in gairai_match_days(days, dow, e):
+            if d not in holidays:
+                sym_by_day[d] = e["symbol"]
+
+    wish_gairai_days = {}          # day -> name
+    for s in staff:
+        n = s["name"]
+        for d, sym in s["cells"].items():
+            if sym in ("G/-", "-/G", "外"):
+                correct = sym_by_day.get(d)
+                if correct and correct != sym:
+                    warnings.append(
+                        f"D{d} {n}:外来記号を設定の時間帯に合わせて {sym}→{correct} に補正")
+                    sym = correct
+                elif sym == "外":
+                    sym = "G/-"
+                gairai_cells[(n, d)] = sym
+                wish_gairai_days[d] = n
+
     for e in gairai:
         pool = [n for n in (e.get("staff") or []) if n in names]
         if not pool:
@@ -141,13 +203,19 @@ def solve(path, holidays, time_limit=60):
         gdays = [d for d in gairai_match_days(days, dow, e) if d not in holidays]
         avail = {}
         for d in gdays:
+            if d in wish_gairai_days:              # 本人記入の外来が既にある日は自動割当しない
+                owner = wish_gairai_days[d]
+                if owner not in pool:
+                    warnings.append(f"D{d} {owner}:希望届に外来記入あり（この日の自動割当はスキップ）")
+                avail[d] = []
+                continue
             cand = []
             for n in pool:
                 wish = cells_of.get(n, {}).get(d, "")
                 if wish in ("×", "●", "▲", "年", "出"):
                     continue                       # 本人希望を優先し外来対象外
                 allowed[(n, d)] = allowed[(n, d)] | {GAI}
-                gairai_cells[(n, d)] = e["symbol"]
+                gairai_cells[(n, d)] = e["symbol"]   # 設定の時間帯(午前/午後)の記号を優先
                 cand.append(n)
             avail[d] = cand
         gairai_slots.append((pool, gdays, avail))
@@ -260,19 +328,26 @@ def solve(path, holidays, time_limit=60):
 
     # 外来：各外来日は1名（プールから）／回数はプール内で均等化
     for gi, (pool, gdays, avail) in enumerate(gairai_slots):
-        for d in gdays:
-            cand = [x[(n, d, GAI)] for n in avail.get(d, []) if (n, d, GAI) in x]
+        auto_days = [d for d in gdays if avail.get(d)]      # 自動割当する日だけ
+        for d in auto_days:
+            cand = [x[(n, d, GAI)] for n in avail[d] if (n, d, GAI) in x]
             if cand:
                 short = slack(f"gsh{gi}_{d}", 900)
                 mdl.Add(sum(cand) + short == 1)          # ちょうど1名（埋まらない時のみ緩和）
-        base = len(gdays) // len(pool) if pool else 0
+        base = len(auto_days) // len(pool) if pool else 0
         for n in pool:
-            cnt = [x[(n, d, GAI)] for d in gdays if (n, d, GAI) in x]
+            cnt = [x[(n, d, GAI)] for d in auto_days if (n, d, GAI) in x]
             if not cnt:
                 continue
             hi = slack(f"ghi{gi}_{n}", 30); lo = slack(f"glo{gi}_{n}", 30)
             mdl.Add(sum(cnt) - hi <= base + 1)           # 最大 ceil
             mdl.Add(sum(cnt) + lo >= base)               # 最小 floor
+
+    # 【固定ルール】外来は病棟全体で 1日1名まで（担当日以外・担当者以外の外来は禁止）
+    for d in days:
+        allg = [x[(n, d, GAI)] for n in names if (n, d, GAI) in x]
+        if allg:
+            mdl.Add(sum(allg) <= 1)
 
     # 夜勤重複回避（詳細設定シートの「同時不可グループ」）
     # 各グループ内の全ペアを対象。厳守=ハード、それ以外=強いソフト(重み300)。
@@ -378,6 +453,33 @@ def solve(path, holidays, time_limit=60):
                 win += has(n, days[i + j], WORK)
             if win:
                 mdl.Add(sum(win) <= 5)
+
+        # 【固定ルール】5連勤の後は2連休（5日連続勤務 → 直後の2日は休み）
+        for i in range(len(days) - 6):
+            seg = [days[i + j] for j in range(5)]
+            w5 = mdl.NewBoolVar(f"w5_{n}_{i}")
+            wvars = []
+            ok = True
+            for d5 in seg:
+                h = has(n, d5, WORK)
+                if not h:
+                    ok = False; break
+                wv = mdl.NewBoolVar(f"wv_{n}_{d5}")
+                mdl.Add(wv == sum(h))
+                wvars.append(wv)
+            if not ok:
+                continue
+            for wv in wvars:
+                mdl.Add(w5 <= wv)
+            mdl.Add(w5 >= sum(wvars) - 4)
+            pen.append((25, w5))          # 5連勤自体を軽く抑制（4連勤までを優先）
+            # w5=1 のとき、直後2日は休み（強いソフト）
+            for k in (5, 6):
+                dnx = days[i + k]
+                rr = has(n, dnx, REST)
+                if rr:
+                    s2 = slack(f"r52_{n}_{i}_{k}", 1500)
+                    mdl.Add(sum(rr) + s2 >= w5)
 
         # 【ルール4】日勤(ー・外来)は連続4回まで（5連続禁止）
         for i in range(len(days) - 4):
