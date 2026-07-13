@@ -274,7 +274,7 @@ def solve(path, holidays, time_limit=60):
             for st, coef in DAYCOUNT_HALF.items():
                 if coef and (n, d, st) in x:
                     day_terms.append(coef * x[(n, d, st)])
-        sh = slack(f"dsh{d}", 1000); ov = slack(f"dov{d}", 2)
+        sh = slack(f"dsh{d}", 3000); ov = slack(f"dov{d}", 60)   # 日勤: 不足は重く、超過も抑制
         mdl.Add(sum(day_terms) + sh >= loH)
         mdl.Add(sum(day_terms) <= hiH)               # 上限（ハード）
         mdl.Add(sum(day_terms) - ov <= loH)          # 目標loに寄せる（超過は軽ペナルティ）
@@ -282,12 +282,12 @@ def solve(path, holidays, time_limit=60):
         # --- 準夜(EVE) ---
         e_lo, e_hi = int(req["eve"][0]), int(req["eve"][1])
         ev = [x[(n, d, EVE)] for n in names if (n, d, EVE) in x]
-        se = slack(f"esh{d}", 1000)
+        se = slack(f"esh{d}", 12000)   # 準夜の人数不足は最優先で回避
         mdl.Add(sum(ev) <= e_hi); mdl.Add(sum(ev) + se >= e_lo)
         # --- 深夜(deep = ● + ー●) ---
         n_lo, n_hi = int(req["nig"][0]), int(req["nig"][1])
         deepall = [v for n in names for v in deep_vars(n, d)]
-        sn = slack(f"nsh{d}", 1000)
+        sn = slack(f"nsh{d}", 12000)   # 深夜の人数不足は最優先で回避
         mdl.Add(sum(deepall) <= n_hi); mdl.Add(sum(deepall) + sn >= n_lo)
 
         # 準夜・深夜 共通のチーム/Lv1/リーダー
@@ -492,7 +492,7 @@ def solve(path, holidays, time_limit=60):
                 dnx = days[i + k]
                 rr = has(n, dnx, REST)
                 if rr:
-                    s2 = slack(f"r52_{n}_{i}_{k}", 1500)
+                    s2 = slack(f"r52_{n}_{i}_{k}", 900)
                     mdl.Add(sum(rr) + s2 >= w5)
 
         # 【ルール4】日勤(ー・外来)は連続4回まで（5連続禁止）
@@ -576,7 +576,7 @@ def solve(path, holidays, time_limit=60):
             continue
         oc = mdl.NewIntVar(0, 31, f"off_{n}")
         mdl.Add(oc == sum(rvars))
-        dlo = slack(f"olo_{n}", 2000)          # 休日数不足は強く penalize
+        dlo = slack(f"olo_{n}", 6000)          # 休日数不足は強く penalize（夜勤人数の次に優先）
         mdl.Add(oc + dlo >= need)
 
     # 【追加】月に最低2回の2連休（5連休以上を取得している場合は免除）ソフト

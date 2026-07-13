@@ -43,7 +43,8 @@ st.title("看護師シフト自動作成")
 with st.sidebar:
     st.header("入力")
     up = st.file_uploader("希望届 (.xlsx)", type=["xlsx"])
-    time_limit = st.slider("計算時間の上限(秒)", 15, 180, 60, step=15)
+    time_limit = st.slider("計算時間の上限(秒)", 30, 360, 180, step=30,
+                           help="条件が厳しい月は長め(240〜360秒)にすると、夜勤人数と休日数の両立がしやすくなります。")
     run = st.button("シフトを生成", type="primary", use_container_width=True)
 
 if up is None:
@@ -157,7 +158,7 @@ if run:
     with st.spinner("シフトを計算中…（別プロセスで実行）"):
         proc = subprocess.run(
             [sys.executable, worker, tmp_in, hol_str, str(time_limit), out_xlsx, result_pkl],
-            env=env, capture_output=True, text=True, timeout=int(time_limit) + 180)
+            env=env, capture_output=True, text=True, timeout=int(time_limit) + 300)
 
     if proc.returncode != 0:
         st.error("計算プロセスが異常終了しました（メモリ不足や制約過多の可能性）。"
