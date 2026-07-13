@@ -4,16 +4,22 @@ from openpyxl import load_workbook
 # 勤務状態
 OFF, LEAVE, DAY, EVE, NIGHT, OFFSITE = "OFF", "LEAVE", "DAY", "EVE", "NIGHT", "OFFSITE"
 GAI, DAYNIGHT = "GAI", "DAYNIGHT"                       # 外来(0.5), 日勤深夜(ー●)
-WORK_STATES = {DAY, EVE, NIGHT, OFFSITE, GAI, DAYNIGHT}     # 連勤にカウント
+TRAIN, TRAIN_HALF, TRAIN_2H = "TRAIN", "TRAIN_HALF", "TRAIN_2H"   # 研修(0/0.5/1)
+WORK_STATES = {DAY, EVE, NIGHT, OFFSITE, GAI, DAYNIGHT,
+               TRAIN, TRAIN_HALF, TRAIN_2H}                # 連勤にカウント
 NIGHT_STATES = {EVE, NIGHT, DAYNIGHT}                      # 夜勤（明け・並び対象）
 DEEP_STATES = {NIGHT, DAYNIGHT}                            # 深夜(3名にカウント)
-DAYCOUNT_HALF = {DAY: 2, DAYNIGHT: 2, GAI: 1}             # 日勤人数の半単位換算
+# 日勤人数への換算（半単位＝FTE×2）: ー/ー●=2, 外来=1, 研=0, 半日研修=1, 2時間研修=2
+DAYCOUNT_HALF = {DAY: 2, DAYNIGHT: 2, GAI: 1,
+                 TRAIN: 0, TRAIN_HALF: 1, TRAIN_2H: 2}
 STATE_SYMBOL = {OFF: "×", LEAVE: "年", DAY: "ー", EVE: "▲", NIGHT: "●",
-                OFFSITE: "出", GAI: "外", DAYNIGHT: "ー●"}
+                OFFSITE: "出", GAI: "外", DAYNIGHT: "ー●",
+                TRAIN: "研", TRAIN_HALF: "ケ/-", TRAIN_2H: "-/2"}
 
 # セル記号 -> 固定状態
 FIXED = {"×": OFF, "年": LEAVE, "ー": DAY, "▲": EVE, "●": NIGHT, "出": OFFSITE,
-         "G/-": GAI, "-/G": GAI, "ケ/-": DAY, "-/ケ": DAY, "-/2": DAY}
+         "G/-": GAI, "-/G": GAI,
+         "研": TRAIN, "ケ/-": TRAIN_HALF, "-/ケ": TRAIN_HALF, "-/2": TRAIN_2H}
 # セル記号 -> 許容集合（除外希望）
 ALLOWED = {
     "非●": {EVE, DAY, OFF}, "非▲": {NIGHT, DAY, OFF},
@@ -227,7 +233,8 @@ def parse_settings(wb, known_names):
                 no_daynight=parse_no_daynight(rows, known_names),
                 headcount=parse_headcount(rows),
                 night_cap=parse_night_cap(rows, known_names),
-                rest_days=parse_rest_days(rows, known_names))
+                rest_days=parse_rest_days(rows, known_names),
+                pre_rest=parse_pre_rest(rows, known_names))
 
 
 DOW_ALL = "月火水木金土日"
@@ -391,6 +398,40 @@ def parse_headcount(rows):
                         eve=(num(row, "elo"), num(row, "ehi")),
                         nig=(num(row, "nlo"), num(row, "nhi"))))
     return out
+
+
+def parse_pre_rest(rows, known_names):
+    """【深夜の前は必ず休み】 対象スタッフ一覧。"""
+    names = set()
+    start = None
+    for i, row in enumerate(rows):
+        cells = [str(v).strip() if v not in (None, "") else "" for v in row]
+        if any(c.startswith("【深夜の前は必ず休み】") for c in cells):
+            start = i
+            break
+    if start is None:
+        return names
+    # タイトル行の下から「スタッフ」ヘッダー行を探し、その次行から読む
+    hdr = None
+    for j in range(start + 1, min(start + 5, len(rows))):
+        cells = [str(v).strip() if v not in (None, "") else "" for v in rows[j]]
+        if "スタッフ" in cells:
+            hdr = j
+            break
+    if hdr is None:
+        return names
+    for j in range(hdr + 1, len(rows)):
+        row = rows[j]
+        if all(v in (None, "") for v in row):
+            break
+        for v in row:
+            txt = str(v).strip() if v not in (None, "") else ""
+            for sep in ("・", "、", ",", "，", "/", "／", " ", "　"):
+                txt = txt.replace(sep, ",")
+            for t in txt.split(","):
+                if t.strip() in known_names:
+                    names.add(t.strip())
+    return names
 
 
 def parse_rest_days(rows, known_names):

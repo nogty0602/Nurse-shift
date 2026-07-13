@@ -2,12 +2,15 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from solve import solve
-from shift_core import MASTER, STATE_SYMBOL, EVE, NIGHT, DAY, OFF, LEAVE, OFFSITE, GAI, DAYNIGHT
+from shift_core import (MASTER, STATE_SYMBOL, EVE, NIGHT, DAY, OFF, LEAVE, OFFSITE,
+                        GAI, DAYNIGHT, TRAIN, TRAIN_HALF, TRAIN_2H)
 
 FILL = {  # 状態 -> (背景, 文字色)
  NIGHT: ("1F4E78", "FFFFFF"), EVE: ("E8A33D", "000000"), DAY: ("E2EFDA", "000000"),
  OFF: ("D9D9D9", "808080"), LEAVE: ("FFF2CC", "000000"), OFFSITE: ("DDEBF7", "1F4E78"),
  GAI: ("D6BFA8", "000000"), DAYNIGHT: ("8DB4E2", "1F2A44"),
+ GAI if False else TRAIN: ("F4E1F0", "000000"),
+ TRAIN_HALF: ("F4E1F0", "000000"), TRAIN_2H: ("F4E1F0", "000000"),
 }
 DOW_FILL = {"土": "DCE6F1", "日": "F2DCDB"}
 
@@ -70,7 +73,7 @@ def export(path, holidays, out, r=None):
     base = row0 + len(names)
     chief_row = row0 + names.index("Z") if "Z" in names else None
     # (ラベル, 加算する記号リスト)
-    labels = [("日勤(実働)", ["ー", "ー●", "P"]), ("準夜 ▲", ["▲"]),
+    labels = [("日勤(実働)", ["ー", "ー●", "P", "-/2"]), ("準夜 ▲", ["▲"]),
               ("深夜 ●", ["●", "ー●"]), ("外来", ["G/-", "-/G", "外"]), ("休 ×", ["×"])]
     top = get_column_letter(4); firstr = row0; lastr = row0 + len(names) - 1
     for k, (lab, marks) in enumerate(labels):

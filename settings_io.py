@@ -38,9 +38,12 @@ TABLE_DEFS = {
     "rest": ("【休日数（1人あたり月）】 対象=全員 または スタッフ名",
              "最低休日数=その月に必要な休みの日数（週休＋祝日分）。年休を含めるかを選べます。",
              ["対象", "最低休日数", "年休を含める"], "DDEBF7"),
+    "pre_rest": ("【深夜の前は必ず休み】 深夜(●)の前日を必ず休みにする人",
+                 "ここに載せた人は、深夜の前日が必ず休みになります（＝日勤深夜ー●も不可）",
+                 ["スタッフ"], "F2DCDB"),
 }
 TABLE_ORDER = ["roles", "overlap", "cond", "phase", "exp", "gairai", "no_dn",
-               "headcount", "night_cap", "rest"]
+               "headcount", "night_cap", "rest", "pre_rest"]
 
 
 def _weeks_to_text(weeks):
@@ -124,6 +127,9 @@ def settings_to_rows(settings):
                 out["rest"].append([n, r0["min"], "○" if r0["include_leave"] else ""])
     else:
         out["rest"] = [["全員", 11, "○"]]
+
+    for n in sorted(settings.get("pre_rest", [])):
+        out["pre_rest"].append([n])
 
     return out
 

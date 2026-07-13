@@ -3,10 +3,12 @@ import os
 os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
 from ortools.sat.python import cp_model
 from shift_core import (parse, MASTER, OFF, LEAVE, DAY, EVE, NIGHT, OFFSITE,
-                        GAI, DAYNIGHT, FIXED, ALLOWED, DAY_REQ, EVE_REQ, NIGHT_REQ, DOW_FRI_MON)
+                        GAI, DAYNIGHT, TRAIN, TRAIN_HALF, TRAIN_2H, DAYCOUNT_HALF,
+                        FIXED, ALLOWED, DAY_REQ, EVE_REQ, NIGHT_REQ, DOW_FRI_MON)
 
-STATES = [OFF, LEAVE, DAY, EVE, NIGHT, OFFSITE, GAI, DAYNIGHT]
-WORK = {DAY, EVE, NIGHT, OFFSITE, GAI, DAYNIGHT}
+STATES = [OFF, LEAVE, DAY, EVE, NIGHT, OFFSITE, GAI, DAYNIGHT,
+          TRAIN, TRAIN_HALF, TRAIN_2H]
+WORK = {DAY, EVE, NIGHT, OFFSITE, GAI, DAYNIGHT, TRAIN, TRAIN_HALF, TRAIN_2H}
 REST = {OFF, LEAVE}
 NIGHTS = {EVE, NIGHT, DAYNIGHT}          # 夜勤（明け・並び対象）
 
@@ -118,6 +120,7 @@ def solve(path, holidays, time_limit=60):
     # ●希望をソフト扱い（解禁前は休みに回す）にする対象＝希望優先でない人
     phase_soft = {n for n in phase_names if not wish_prio[n]}
     no_daynight = data["settings"].get("no_daynight", set())
+    pre_rest = data["settings"].get("pre_rest", set())
     gairai = data["settings"].get("gairai", [])
     holidays = data.get("holidays", set())
     cells_of = {s["name"]: s["cells"] for s in staff}
@@ -268,8 +271,8 @@ def solve(path, holidays, time_limit=60):
         for n in names:
             if is_chief[n]:
                 continue
-            for st, coef in ((DAY, 2), (DAYNIGHT, 2), (GAI, 1)):
-                if (n, d, st) in x:
+            for st, coef in DAYCOUNT_HALF.items():
+                if coef and (n, d, st) in x:
                     day_terms.append(coef * x[(n, d, st)])
         sh = slack(f"dsh{d}", 1000); ov = slack(f"dov{d}", 2)
         mdl.Add(sum(day_terms) + sh >= loH)
@@ -437,15 +440,26 @@ def solve(path, holidays, time_limit=60):
                 trip = has(n, d, NIGHTS) + has(n, nd, NIGHTS) + has(n, nd2, NIGHTS)
                 if trip:
                     mdl.Add(sum(trip) <= 2)
-                # ●×● / ▲×● : 夜勤→単休→深夜 禁止
+                rest_nd = has(n, nd, REST)
                 deep_nd2 = has(n, nd2, {NIGHT, DAYNIGHT})
-                if night_d and deep_nd2:
-                    rest_nd = has(n, nd, REST)
-                    if rest_nd:
-                        for a in night_d:
-                            for b in rest_nd:
-                                for c in deep_nd2:
-                                    mdl.Add(a + b + c <= 2)
+                eve_d = [x[(n, d, EVE)]] if (n, d, EVE) in x else []
+                eve_nd2 = [x[(n, nd2, EVE)]] if (n, nd2, EVE) in x else []
+                deep_d = has(n, d, {NIGHT, DAYNIGHT})
+                if rest_nd:
+                    # ▲×● : 準夜→単休→深夜 は禁止（ハード）
+                    for a in eve_d:
+                        for b in rest_nd:
+                            for c in deep_nd2:
+                                mdl.Add(a + b + c <= 2)
+                    # ●×● / ▲×▲ : なるべく避ける（ソフト）
+                    for pair_a, pair_c, tag in ((deep_d, deep_nd2, "dxd"),
+                                                (eve_d, eve_nd2, "exe")):
+                        if not pair_a or not pair_c:
+                            continue
+                        z = mdl.NewBoolVar(f"{tag}_{n}_{d}")
+                        for a in pair_a:
+                            mdl.Add(z >= a + sum(rest_nd) + sum(pair_c) - 2)
+                        pen.append((120, z))
         # 連勤最大5（6連勤禁止・絶対上限＝ハード制約）
         for i in range(len(days) - 5):
             win = []
@@ -502,12 +516,29 @@ def solve(path, holidays, time_limit=60):
                 dnpat_by_day.setdefault(nd, []).append(z)
         if dnpat:
             zs = [z for _, z in dnpat]
-            if n in no_daynight:
+            if n in pre_rest or n in no_daynight:
                 mdl.Add(sum(zs) <= 1)                 # ー●不可者：原則0（月1回まで）
                 for z in zs:
                     pen.append((300, z))
             else:
                 mdl.Add(sum(zs) <= 2)                 # 個人 月2回まで（ハード）
+
+        # 【詳細設定】深夜の前は必ず休み（指定スタッフ・ハード）
+        # 連続深夜(●●)は許容し、そのブロックに入る前日が休みであることを要求する
+        if n in pre_rest:
+            for i, d in enumerate(days):
+                if (n, d, NIGHT) not in x or i == 0:
+                    continue
+                pd = days[i - 1]
+                # 前日が「休み」または「深夜(連続)」以外なら、この日の深夜を禁止
+                for st in STATES:
+                    if st in (OFF, LEAVE, NIGHT, DAYNIGHT):
+                        continue
+                    if (n, pd, st) in x:
+                        mdl.Add(x[(n, pd, st)] + x[(n, d, NIGHT)] <= 1)
+            for i, d in enumerate(days):              # ー●（日勤の直後の深夜）は不可
+                if (n, d, DAYNIGHT) in x:
+                    mdl.Add(x[(n, d, DAYNIGHT)] == 0)
 
     # 【ルール2】ー●（日勤→翌深夜）は1日あたり最大2名（病棟全体・ハード）
     for nd, zs in dnpat_by_day.items():

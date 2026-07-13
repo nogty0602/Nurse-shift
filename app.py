@@ -27,12 +27,13 @@ except ImportError:
 # 計算は run_solver.py を別プロセスで実行するため、ここで solve/ortools は import しない
 from settings_io import settings_to_rows, write_settings_sheet, TABLE_DEFS, TABLE_ORDER
 from shift_core import (parse_settings, STATE_SYMBOL, OFF, DAY, EVE, NIGHT,
-                        DAYNIGHT, GAI)
+                        DAYNIGHT, GAI, TRAIN, TRAIN_HALF, TRAIN_2H)
 
 CELL_COLOR = {
     "●": "#1F4E78", "ー●": "#8DB4E2", "▲": "#E8A33D", "ー": "#E2EFDA",
     "P": "#E2EFDA", "×": "#D9D9D9", "年": "#FFF2CC", "出": "#DDEBF7",
     "外": "#D6BFA8", "G/-": "#D6BFA8", "-/G": "#D6BFA8", "": "#FFFFFF",
+    "研": "#F4E1F0", "ケ/-": "#F4E1F0", "-/2": "#F4E1F0",
 }
 WHITE_TEXT = {"●", "ー●"}
 
@@ -123,7 +124,8 @@ LABELS = {"roles": "① 役割設定", "overlap": "② 夜勤 同時不可グル
           "cond": "③ 個人の勤務条件", "phase": "④ 夜勤フェーズ定義",
           "exp": "⑤ レベル1 深夜経験回数", "gairai": "⑥ 外来割当",
           "no_dn": "⑦ 日勤深夜(ー●)不可", "headcount": "⑧ 必要人数(下限/上限)",
-          "night_cap": "⑨ 夜勤上限(1人あたり月)", "rest": "⑩ 休日数(1人あたり月)"}
+          "night_cap": "⑨ 夜勤上限(1人あたり月)", "rest": "⑩ 休日数(1人あたり月)",
+          "pre_rest": "⑪ 深夜の前は必ず休み"}
 
 edited = {}
 for key in TABLE_ORDER:
@@ -198,13 +200,13 @@ if run:
     styler = styler.map(color) if hasattr(styler, "map") else styler.applymap(color)
     st.dataframe(styler, use_container_width=True, height=560)
     st.markdown("**凡例** ● 深夜 / ー● 日勤深夜 / ▲ 準夜 / ー 日勤 / P 時短 / "
-                "G/-・-/G 外来 / × 休 / 年 年休 / 出 出張")
+                "G/-・-/G 外来 / 研 研修 / ケ/- 半日研修 / -/2 2時間研修 / × 休 / 年 年休 / 出 出張")
 
     def cnt(d, states):
         return sum(1 for n in names if A.get(f"{n}|{d}") in states
                    and staff[n].get("emp") != "師長")
     summ = pd.DataFrame({
-        "日勤(実働)": [cnt(d, {DAY, DAYNIGHT}) for d in days],
+        "日勤(実働)": [cnt(d, {DAY, DAYNIGHT, TRAIN_2H}) for d in days],
         "準夜": [sum(1 for n in names if A.get(f"{n}|{d}") == EVE) for d in days],
         "深夜": [sum(1 for n in names if A.get(f"{n}|{d}") in {NIGHT, DAYNIGHT}) for d in days],
         "外来": [sum(1 for n in names if A.get(f"{n}|{d}") == GAI) for d in days],
