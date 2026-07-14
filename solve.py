@@ -60,8 +60,15 @@ def build_allowed(name, dtype, dow, sym, shift_rules, phase_names=frozenset(), c
     return base, None                                    # 空欄
 
 
-def solve(path, holidays, time_limit=60):
+def solve(path, holidays, time_limit=60, prev_path=None):
     data = parse(path, holidays)
+    prev = {}
+    if prev_path:
+        from shift_core import parse_prev_schedule
+        try:
+            prev = parse_prev_schedule(prev_path)
+        except Exception as e:          # 読めなくても生成は続行
+            prev = {}
     days, dtype, dow = data["days"], data["dtype"], data["dow"]
     staff = data["staff"]
     names = [s["name"] for s in staff]
@@ -403,6 +410,85 @@ def solve(path, holidays, time_limit=60):
     for (n, d) in soft_night_wish:
         if (n, d, OFF) in x:
             pen.append((40, x[(n, d, OFF)]))
+
+    # 【月またぎ】前月末の勤務から、月初の連勤・夜勤明け・並びを制約
+    if prev:
+        d1 = days[0]
+        for n in names:
+            if is_chief[n]:
+                continue
+            seq = prev.get(n)
+            if not seq:
+                continue
+            last = seq[-1]                      # 前月末日
+            prev2 = seq[-2] if len(seq) >= 2 else None
+
+            # 1) 夜勤明け：前月末が夜勤(▲/●) → 1日は日勤系(ー/外来/出張/ー●)に入れない
+            if last in (EVE, NIGHT):
+                for st in (DAY, GAI, OFFSITE, DAYNIGHT):
+                    if (n, d1, st) in x:
+                        mdl.Add(x[(n, d1, st)] == 0)
+            # 2) ▲● 禁止：前月末が準夜 → 1日の深夜は不可
+            if last == EVE:
+                for st in (NIGHT, DAYNIGHT):
+                    if (n, d1, st) in x:
+                        mdl.Add(x[(n, d1, st)] == 0)
+            # 3) 3連続夜勤の禁止：前月末2日が夜勤 → 1日は夜勤不可
+            if last in (EVE, NIGHT) and prev2 in (EVE, NIGHT):
+                for st in (EVE, NIGHT, DAYNIGHT):
+                    if (n, d1, st) in x:
+                        mdl.Add(x[(n, d1, st)] == 0)
+            # 4) ー●：前月末が日勤 → 1日の深夜は「日勤深夜」に相当（ー●不可者は禁止）
+            if last in (DAY, GAI) and (n in no_daynight or n in pre_rest):
+                for st in (NIGHT, DAYNIGHT):
+                    if (n, d1, st) in x:
+                        mdl.Add(x[(n, d1, st)] == 0)
+            # 5) 深夜の前は必ず休み（指定者）：前月末が休みでなければ1日の深夜は不可
+            if n in pre_rest and last not in (OFF, LEAVE, NIGHT):
+                for st in (NIGHT, DAYNIGHT):
+                    if (n, d1, st) in x:
+                        mdl.Add(x[(n, d1, st)] == 0)
+            # 6) 月またぎの連勤：前月末の連勤数 k → 今月は (5-k) 日で必ず休みが必要
+            k = 0
+            for s_ in reversed(seq):
+                if s_ in WORK:
+                    k += 1
+                else:
+                    break
+            if k > 0:
+                room = max(0, 5 - k)            # 連勤上限5
+                span = days[:room + 1]
+                rest_terms = []
+                for dd in span:
+                    rest_terms += has(n, dd, REST)
+                if rest_terms:
+                    mdl.Add(sum(rest_terms) >= 1)   # この範囲に必ず休みを1つ
+                else:
+                    pass
+            # 7) 日勤の連続4回：前月末の日勤連続数 j → 今月頭の日勤を制限
+            j = 0
+            for s_ in reversed(seq):
+                if s_ in (DAY, GAI):
+                    j += 1
+                else:
+                    break
+            if j > 0:
+                room = max(0, 4 - j)
+                span = days[:room + 1]
+                dterms = []
+                for dd in span:
+                    dterms += has(n, dd, {DAY, GAI})
+                if dterms:
+                    sd = slack(f"xday_{n}", 400)
+                    mdl.Add(sum(dterms) - sd <= room)
+            # 8) 5連勤後の2連休（月またぎ）：前月末が5連勤 → 1日(と2日)は休み
+            if k >= 5:
+                need = 2 - (0)                  # 前月内で休めていないので今月頭に2連休
+                for idx in range(min(2, len(days))):
+                    rr = has(n, days[idx], REST)
+                    if rr:
+                        s2 = slack(f"x52_{n}_{idx}", 900)
+                        mdl.Add(sum(rr) + s2 >= 1)
 
     # 並び順・連勤（日ごと隣接）
     dnpat_by_day = {}     # ●の日 -> その日にー●となる人のz変数

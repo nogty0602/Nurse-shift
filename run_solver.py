@@ -1,6 +1,6 @@
 """別プロセスで解く子スクリプト（Streamlitと分離して ortools を実行）。
 
-呼び出し: python run_solver.py <in.xlsx> <holidays> <time_limit> <out.xlsx> <result.pkl>
+呼び出し: python run_solver.py <in.xlsx> <holidays> <time_limit> <out.xlsx> <result.pkl> [prev.xlsx]
   holidays: "11,15" のようなカンマ区切り（空文字可）
 結果を result.pkl に保存し、勤務表を out.xlsx に書き出す。
 """
@@ -20,8 +20,9 @@ def main():
     time_limit = int(sys.argv[3]) if len(sys.argv) > 3 else 60
     out_xlsx = sys.argv[4]
     result_pkl = sys.argv[5]
+    prev_path = sys.argv[6] if len(sys.argv) > 6 and sys.argv[6] not in ("", "-") else None
 
-    r = solve(in_path, holidays, time_limit=time_limit)
+    r = solve(in_path, holidays, time_limit=time_limit, prev_path=prev_path)
     payload = {"status": r["status"], "warnings": r["warnings"], "has_output": False}
     if r["assign"]:
         staff = {s["name"]: {"team": s.get("team"), "emp": s.get("emp"),

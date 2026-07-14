@@ -43,6 +43,8 @@ st.title("看護師シフト自動作成")
 with st.sidebar:
     st.header("入力")
     up = st.file_uploader("希望届 (.xlsx)", type=["xlsx"])
+    prev_up = st.file_uploader("前月の勤務表 (.xlsx・任意)", type=["xlsx"],
+                               help="前月末の勤務を読み込み、月をまたぐ連勤・夜勤明け・並びを判定します。")
     time_limit = st.slider("計算時間の上限(秒)", 30, 360, 180, step=30,
                            help="条件が厳しい月は長め(240〜360秒)にすると、夜勤人数と休日数の両立がしやすくなります。")
     run = st.button("シフトを生成", type="primary", use_container_width=True)
@@ -151,13 +153,19 @@ if run:
     out_xlsx = os.path.join(tempfile.gettempdir(), "schedule_out.xlsx")
     result_pkl = os.path.join(tempfile.gettempdir(), "result.pkl")
     hol_str = ",".join(str(d) for d in sorted(holidays))
+    prev_path = "-"
+    if prev_up is not None:
+        prev_path = os.path.join(tempfile.gettempdir(), "prev_schedule.xlsx")
+        with open(prev_path, "wb") as f:
+            f.write(prev_up.getbuffer())
     worker = os.path.join(os.path.dirname(os.path.abspath(__file__)), "run_solver.py")
     env = dict(os.environ)
     env["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
 
     with st.spinner("シフトを計算中…（別プロセスで実行）"):
         proc = subprocess.run(
-            [sys.executable, worker, tmp_in, hol_str, str(time_limit), out_xlsx, result_pkl],
+            [sys.executable, worker, tmp_in, hol_str, str(time_limit), out_xlsx,
+             result_pkl, prev_path],
             env=env, capture_output=True, text=True, timeout=int(time_limit) + 300)
 
     if proc.returncode != 0:

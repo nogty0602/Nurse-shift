@@ -400,6 +400,55 @@ def parse_headcount(rows):
     return out
 
 
+def parse_prev_schedule(path, tail=7):
+    """前月の勤務表(このアプリで生成したもの/同形式)から月末 tail 日分を読む。
+    返り値: {スタッフ名: [状態, ...]} 古い順（最後が前月末日）。"""
+    wb = load_workbook(path, data_only=True)
+    ws = wb["勤務表"] if "勤務表" in wb.sheetnames else wb[wb.sheetnames[0]]
+
+    hdr_row = None
+    day_cols = {}
+    for r in range(1, min(6, ws.max_row) + 1):
+        vals = [str(ws.cell(r, c).value).strip() if ws.cell(r, c).value is not None else ""
+                for c in range(1, ws.max_column + 1)]
+        if any("スタッフ" in v for v in vals):
+            hdr_row = r
+            for c in range(1, ws.max_column + 1):
+                v = ws.cell(r, c).value
+                dnum = None
+                if isinstance(v, (int, float)):
+                    dnum = int(v)
+                elif isinstance(v, str) and v.strip().isdigit():
+                    dnum = int(v.strip())
+                if dnum is not None and 1 <= dnum <= 31:
+                    day_cols[dnum] = c
+            break
+    if hdr_row is None or not day_cols:
+        return {}
+
+    last_days = sorted(day_cols)[-tail:]
+    prev = {}
+    for r in range(hdr_row + 1, ws.max_row + 1):
+        name = ws.cell(r, 1).value
+        if name in (None, ""):
+            continue
+        name = str(name).strip()
+        seq = []
+        for d in last_days:
+            v = ws.cell(r, day_cols[d]).value
+            sym = str(v).strip() if v not in (None, "") else ""
+            if sym == "P":
+                sym = "ー"
+            if sym in ("外", "G/-", "-/G"):
+                seq.append(GAI)
+            elif sym == "ー●":
+                seq.append(DAY)
+            else:
+                seq.append(FIXED.get(sym, OFF))
+        prev[name] = seq
+    return prev
+
+
 def parse_pre_rest(rows, known_names):
     """【深夜の前は必ず休み】 対象スタッフ一覧。"""
     names = set()
