@@ -549,16 +549,33 @@ def solve(path, holidays, time_limit=60):
     ncap = data["settings"].get("night_cap", {})
     for n in night_cap:
         nc = mdl.NewIntVar(0, 31, f"nc_{n}")
-        terms = []
+        ev_terms, dp_terms = [], []
         for d in days:
-            if (n, d, EVE) in x:   terms.append(x[(n, d, EVE)])
-            if (n, d, NIGHT) in x: terms.append(x[(n, d, NIGHT)])
-            if (n, d, DAYNIGHT) in x: terms.append(x[(n, d, DAYNIGHT)])
+            if (n, d, EVE) in x:   ev_terms.append(x[(n, d, EVE)])
+            if (n, d, NIGHT) in x: dp_terms.append(x[(n, d, NIGHT)])
+            if (n, d, DAYNIGHT) in x: dp_terms.append(x[(n, d, DAYNIGHT)])
+        terms = ev_terms + dp_terms
         mdl.Add(nc == sum(terms))
         cap = ncap.get(n, ncap.get("_default", 10))
         mdl.Add(nc <= cap)                       # 上限（ハード）
         lo = slack(f"nlo_{n}", 15)
         mdl.Add(nc + lo >= min(8, cap))          # 下限8の目安（上限が8未満なら緩和）
+
+        # 準夜・深夜の配分：両方に入れる人は、どちらにも入れる（偏りを是正）
+        if ev_terms and dp_terms:
+            ec = mdl.NewIntVar(0, 31, f"ec_{n}")
+            dc = mdl.NewIntVar(0, 31, f"dc_{n}")
+            mdl.Add(ec == sum(ev_terms))
+            mdl.Add(dc == sum(dp_terms))
+            # 片方が0になるのを強く回避（最低でも各2回は入る）
+            se = slack(f"emin_{n}", 900); sd = slack(f"dmin_{n}", 900)
+            mdl.Add(ec + se >= 2)
+            mdl.Add(dc + sd >= 2)
+            # 準夜と深夜の差を抑える（偏りにペナルティ）
+            gap = mdl.NewIntVar(0, 31, f"gap_{n}")
+            mdl.Add(gap >= ec - dc)
+            mdl.Add(gap >= dc - ec)
+            pen.append((60, gap))
 
     # 【休日数】詳細設定の「最低休日数」を確保（既定＝月の土日祝数）
     rest_cfg = data["settings"].get("rest_days", {})
