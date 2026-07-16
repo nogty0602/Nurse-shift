@@ -63,12 +63,16 @@ def build_allowed(name, dtype, dow, sym, shift_rules, phase_names=frozenset(), c
 def solve(path, holidays, time_limit=60, prev_path=None):
     data = parse(path, holidays)
     prev = {}
+    prev_error = None
     if prev_path:
         from shift_core import parse_prev_schedule
         try:
             prev = parse_prev_schedule(prev_path)
+            if not prev:
+                prev_error = "前月の勤務表を読み込めませんでした（『勤務表』シート・スタッフ名の列・日付の見出しをご確認ください）。月またぎ判定なしで作成します"
         except Exception as e:          # 読めなくても生成は続行
             prev = {}
+            prev_error = f"前月の勤務表の読み込みに失敗しました（{e}）。月またぎ判定なしで作成します"
     days, dtype, dow = data["days"], data["dtype"], data["dow"]
     staff = data["staff"]
     names = [s["name"] for s in staff]
@@ -83,6 +87,8 @@ def solve(path, holidays, time_limit=60, prev_path=None):
             lvl[s["name"]] = v
     idx = {n: i for i, n in enumerate(names)}
     warnings = []
+    if prev_error:
+        warnings.append(prev_error)
     if lvl_missing:
         warnings.append("レベル未入力のため暫定でLv1として扱いました: " + "、".join(lvl_missing)
                         + "（希望届のレベル欄に数字を入力してください）")
@@ -413,6 +419,23 @@ def solve(path, holidays, time_limit=60, prev_path=None):
 
     # 【月またぎ】前月末の勤務から、月初の連勤・夜勤明け・並びを制約
     if prev:
+        matched = [n for n in names if n in prev]
+        unmatched = sorted(set(prev) - set(names))
+        warnings.append(
+            f"前月の勤務表を読み込みました（照合できたスタッフ: {len(matched)}名 / "
+            f"前月{len(prev)}名中）")
+        if unmatched:
+            warnings.append(
+                "前月にいて今月の希望届に見つからないスタッフ（月またぎ判定なし）: "
+                + "、".join(unmatched)
+                + " ※退職・休職なら問題ありません。名前の表記違い（空白・旧姓など）の場合は"
+                  "希望届の氏名を前月の勤務表と揃えてください")
+        no_prev = sorted(n for n in names if n not in prev and not attr[n]["chief"])
+        if no_prev:
+            warnings.append(
+                "今月の希望届にいて前月の勤務表に見つからないスタッフ（月またぎ判定なし）: "
+                + "、".join(no_prev))
+
         d1 = days[0]
         for n in names:
             if is_chief[n]:
