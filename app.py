@@ -164,6 +164,8 @@ for key in TABLE_ORDER:
         edited[key] = ed.values.tolist()
 
 if run:
+    for _k in ("result", "schedule_bytes", "settings_bytes", "ym"):
+        st.session_state.pop(_k, None)      # 前回の結果をクリア
     write_settings_sheet(wb, edited)
     wb.save(tmp_in)
 
@@ -198,6 +200,27 @@ if run:
     if not p.get("has_output"):
         st.error(f"解が見つかりませんでした (status: {p['status']})。制約が厳しすぎる可能性があります。")
         st.stop()
+
+    # 結果と成果物をセッションに保持（ダウンロード後の再実行でも消えないように）
+    with open(out_xlsx, "rb") as f:
+        schedule_bytes = f.read()
+    settings_bytes = None
+    if save_settings:
+        set_out = os.path.join(tempfile.gettempdir(), "settings_out.xlsx")
+        save_settings_file(edited, set_out)
+        with open(set_out, "rb") as f:
+            settings_bytes = f.read()
+    st.session_state["result"] = p
+    st.session_state["schedule_bytes"] = schedule_bytes
+    st.session_state["settings_bytes"] = settings_bytes
+    st.session_state["ym"] = (int(year), int(month))
+
+# ===== 結果表示（run の外＝ダウンロード後の再実行でも表示され続ける）=====
+if "result" in st.session_state:
+    p = st.session_state["result"]
+    schedule_bytes = st.session_state.get("schedule_bytes")
+    settings_bytes = st.session_state.get("settings_bytes")
+    yy, mm = st.session_state.get("ym", (0, 0))
     st.success(f"生成完了 (status: {p['status']})")
 
     days = p["days"]; dow = p["dow"]; names = p["names"]; lvl = p["lvl"]; staff = p["staff"]
@@ -245,18 +268,14 @@ if run:
             for w in p["warnings"]:
                 st.write("・" + w)
 
-    with open(out_xlsx, "rb") as f:
-        st.download_button("勤務表(Excel)をダウンロード", f.read(),
-                           file_name="勤務表.xlsx",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                           use_container_width=True)
-
-    if save_settings:
-        set_out = os.path.join(tempfile.gettempdir(), "settings_out.xlsx")
-        save_settings_file(edited, set_out)
-        with open(set_out, "rb") as f:
-            st.download_button("詳細設定ファイルをダウンロード（次月用）", f.read(),
-                               file_name=f"詳細設定_{int(year)}年{int(month):02d}月.xlsx",
-                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                               use_container_width=True)
+    MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    c1, c2 = st.columns(2)
+    if schedule_bytes:
+        c1.download_button("勤務表(Excel)をダウンロード", schedule_bytes,
+                           file_name=f"勤務表_{yy}年{mm:02d}月.xlsx", mime=MIME,
+                           use_container_width=True, key="dl_sched")
+    if settings_bytes:
+        c2.download_button("詳細設定ファイルをダウンロード（次月用）", settings_bytes,
+                           file_name=f"詳細設定_{yy}年{mm:02d}月.xlsx", mime=MIME,
+                           use_container_width=True, key="dl_set")
         st.caption("このファイルを次月の「詳細設定ファイル」に読み込ませると、同じ設定で作成できます。")
