@@ -3,12 +3,14 @@ import os
 os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
 from ortools.sat.python import cp_model
 from shift_core import (parse, MASTER, OFF, LEAVE, DAY, EVE, NIGHT, OFFSITE,
-                        GAI, DAYNIGHT, TRAIN, TRAIN_HALF, TRAIN_2H, DAYCOUNT_HALF,
+                        GAI, DAYNIGHT, TRAIN, TRAIN_HALF, TRAIN_2H, COMMITTEE,
+                        DAYCOUNT_HALF,
                         FIXED, ALLOWED, DAY_REQ, EVE_REQ, NIGHT_REQ, DOW_FRI_MON)
 
 STATES = [OFF, LEAVE, DAY, EVE, NIGHT, OFFSITE, GAI, DAYNIGHT,
-          TRAIN, TRAIN_HALF, TRAIN_2H]
-WORK = {DAY, EVE, NIGHT, OFFSITE, GAI, DAYNIGHT, TRAIN, TRAIN_HALF, TRAIN_2H}
+          TRAIN, TRAIN_HALF, TRAIN_2H, COMMITTEE]
+WORK = {DAY, EVE, NIGHT, OFFSITE, GAI, DAYNIGHT, TRAIN, TRAIN_HALF, TRAIN_2H,
+        COMMITTEE}
 REST = {OFF, LEAVE}
 NIGHTS = {EVE, NIGHT, DAYNIGHT}          # 夜勤（明け・並び対象）
 

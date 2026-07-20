@@ -5,21 +5,25 @@ from openpyxl import load_workbook
 OFF, LEAVE, DAY, EVE, NIGHT, OFFSITE = "OFF", "LEAVE", "DAY", "EVE", "NIGHT", "OFFSITE"
 GAI, DAYNIGHT = "GAI", "DAYNIGHT"                       # 外来(0.5), 日勤深夜(ー●)
 TRAIN, TRAIN_HALF, TRAIN_2H = "TRAIN", "TRAIN_HALF", "TRAIN_2H"   # 研修(0/0.5/1)
+COMMITTEE = "COMMITTEE"                                  # 委員会(ーイ): 0.5カウント
 WORK_STATES = {DAY, EVE, NIGHT, OFFSITE, GAI, DAYNIGHT,
-               TRAIN, TRAIN_HALF, TRAIN_2H}                # 連勤にカウント
+               TRAIN, TRAIN_HALF, TRAIN_2H, COMMITTEE}     # 連勤にカウント
 NIGHT_STATES = {EVE, NIGHT, DAYNIGHT}                      # 夜勤（明け・並び対象）
 DEEP_STATES = {NIGHT, DAYNIGHT}                            # 深夜(3名にカウント)
 # 日勤人数への換算（半単位＝FTE×2）: ー/ー●=2, 外来=1, 研=0, 半日研修=1, 2時間研修=2
 DAYCOUNT_HALF = {DAY: 2, DAYNIGHT: 2, GAI: 1,
-                 TRAIN: 0, TRAIN_HALF: 1, TRAIN_2H: 2}
+                 TRAIN: 0, TRAIN_HALF: 1, TRAIN_2H: 2, COMMITTEE: 1}
 STATE_SYMBOL = {OFF: "×", LEAVE: "年", DAY: "ー", EVE: "▲", NIGHT: "●",
                 OFFSITE: "出", GAI: "外", DAYNIGHT: "ー●",
-                TRAIN: "研", TRAIN_HALF: "ケ/-", TRAIN_2H: "-/2"}
+                TRAIN: "研", TRAIN_HALF: "ケ/-", TRAIN_2H: "-/2",
+                COMMITTEE: "ーイ"}
 
 # セル記号 -> 固定状態
 FIXED = {"×": OFF, "年": LEAVE, "ー": DAY, "▲": EVE, "●": NIGHT, "出": OFFSITE,
          "G/-": GAI, "-/G": GAI,
-         "研": TRAIN, "ケ/-": TRAIN_HALF, "-/ケ": TRAIN_HALF, "-/2": TRAIN_2H}
+         "研": TRAIN, "ケ/-": TRAIN_HALF, "-/ケ": TRAIN_HALF, "-/2": TRAIN_2H,
+         "ーイ": COMMITTEE, "-イ": COMMITTEE, "イ/-": COMMITTEE, "イ/ー": COMMITTEE,
+         "-/イ": COMMITTEE, "ー/イ": COMMITTEE, "イ": COMMITTEE}
 # セル記号 -> 許容集合（除外希望）
 ALLOWED = {
     "非●": {EVE, DAY, OFF}, "非▲": {NIGHT, DAY, OFF},

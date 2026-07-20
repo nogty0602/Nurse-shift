@@ -34,6 +34,7 @@ CELL_COLOR = {
     "P": "#E2EFDA", "×": "#D9D9D9", "年": "#FFF2CC", "出": "#DDEBF7",
     "外": "#D6BFA8", "G/-": "#D6BFA8", "-/G": "#D6BFA8", "": "#FFFFFF",
     "研": "#F4E1F0", "ケ/-": "#F4E1F0", "-/2": "#F4E1F0",
+    "ーイ": "#FDE9D9",
 }
 WHITE_TEXT = {"●", "ー●"}
 
@@ -209,7 +210,7 @@ if run:
     styler = styler.map(color) if hasattr(styler, "map") else styler.applymap(color)
     st.dataframe(styler, use_container_width=True, height=560)
     st.markdown("**凡例** ● 深夜 / ー● 日勤深夜 / ▲ 準夜 / ー 日勤 / P 時短 / "
-                "G/-・-/G 外来 / 研 研修 / ケ/- 半日研修 / -/2 2時間研修 / × 休 / 年 年休 / 出 出張")
+                "G/-・-/G 外来 / ーイ 委員会 / 研 研修 / ケ/- 半日研修 / -/2 2時間研修 / × 休 / 年 年休 / 出 出張")
 
     def cnt(d, states):
         return sum(1 for n in names if A.get(f"{n}|{d}") in states
