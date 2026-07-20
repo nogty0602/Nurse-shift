@@ -165,7 +165,7 @@ def solve(path, holidays, time_limit=60, prev_path=None):
         if attr[n]["chief"]:
             continue
         for i, d in enumerate(days):
-            if s["cells"].get(d, "") != "×":
+            if s["cells"].get(d, "") not in ("×", "年"):
                 continue
             if i > 0:                                    # 前日: 準夜を除外
                 pd = days[i - 1]
@@ -287,7 +287,7 @@ def solve(path, holidays, time_limit=60, prev_path=None):
             for st, coef in DAYCOUNT_HALF.items():
                 if coef and (n, d, st) in x:
                     day_terms.append(coef * x[(n, d, st)])
-        sh = slack(f"dsh{d}", 3000); ov = slack(f"dov{d}", 60)   # 日勤: 不足は重く、超過も抑制
+        sh = slack(f"dsh{d}", 3000); ov = slack(f"dov{d}", 60)   # 【第3優先】日勤の人数
         mdl.Add(sum(day_terms) + sh >= loH)
         mdl.Add(sum(day_terms) <= hiH)               # 上限（ハード）
         mdl.Add(sum(day_terms) - ov <= loH)          # 目標loに寄せる（超過は軽ペナルティ）
@@ -295,12 +295,12 @@ def solve(path, holidays, time_limit=60, prev_path=None):
         # --- 準夜(EVE) ---
         e_lo, e_hi = int(req["eve"][0]), int(req["eve"][1])
         ev = [x[(n, d, EVE)] for n in names if (n, d, EVE) in x]
-        se = slack(f"esh{d}", 12000)   # 準夜の人数不足は最優先で回避
+        se = slack(f"esh{d}", 50000)   # 【最優先】準夜の人数不足
         mdl.Add(sum(ev) <= e_hi); mdl.Add(sum(ev) + se >= e_lo)
         # --- 深夜(deep = ● + ー●) ---
         n_lo, n_hi = int(req["nig"][0]), int(req["nig"][1])
         deepall = [v for n in names for v in deep_vars(n, d)]
-        sn = slack(f"nsh{d}", 12000)   # 深夜の人数不足は最優先で回避
+        sn = slack(f"nsh{d}", 50000)   # 【最優先】深夜の人数不足
         mdl.Add(sum(deepall) <= n_hi); mdl.Add(sum(deepall) + sn >= n_lo)
 
         # 準夜・深夜 共通のチーム/Lv1/リーダー
@@ -601,8 +601,42 @@ def solve(path, holidays, time_limit=60, prev_path=None):
                 dnx = days[i + k]
                 rr = has(n, dnx, REST)
                 if rr:
-                    s2 = slack(f"r52_{n}_{i}_{k}", 900)
+                    s2 = slack(f"r52_{n}_{i}_{k}", 5000)  # 【第4】5連勤後2連休（優先）
                     mdl.Add(sum(rr) + s2 >= w5)
+
+        # 【固定ルール】4連勤の後も2連休を優先（連勤明けが単休1日になるのを回避）
+        for i in range(len(days) - 5):
+            seg = [days[i + j] for j in range(4)]
+            wv4 = []
+            ok = True
+            for d4 in seg:
+                h = has(n, d4, WORK)
+                if not h:
+                    ok = False; break
+                v = mdl.NewBoolVar(f"w4v_{n}_{d4}")
+                mdl.Add(v == sum(h))
+                wv4.append(v)
+            if not ok:
+                continue
+            # 直前が休み（＝この4日がブロック先頭）であることも条件に入れる
+            head = []
+            if i > 0:
+                head = has(n, days[i - 1], REST)
+            w4 = mdl.NewBoolVar(f"w4_{n}_{i}")
+            for v in wv4:
+                mdl.Add(w4 <= v)
+            if head:
+                mdl.Add(w4 <= sum(head))
+                mdl.Add(w4 >= sum(wv4) + sum(head) - 4)
+            else:
+                mdl.Add(w4 >= sum(wv4) - 3)
+            # 4連勤の直後2日（5日目が休みの場合、6日目も休みに）
+            d5 = days[i + 4]; d6 = days[i + 5]
+            r5 = has(n, d5, REST); r6 = has(n, d6, REST)
+            if r5 and r6:
+                s4 = slack(f"r42_{n}_{i}", 800)      # 【第4】4連勤後2連休
+                # w4=1 かつ 5日目が休み → 6日目も休み
+                mdl.Add(sum(r6) + s4 >= sum(r5) + w4 - 1)
 
         # 【ルール4】日勤(ー・外来)は連続4回まで（5連続禁止）
         for i in range(len(days) - 4):
@@ -686,6 +720,20 @@ def solve(path, holidays, time_limit=60, prev_path=None):
             mdl.Add(gap >= dc - ec)
             pen.append((60, gap))
 
+            # 【固定ルール】短期間に同じ種類の夜勤が偏らない（7日窓で準夜/深夜とも3回まで）
+            for i in range(len(days) - 6):
+                win = [days[i + j] for j in range(7)]
+                ew = [x[(n, d, EVE)] for d in win if (n, d, EVE) in x]
+                dw = [v for d in win for v in
+                      ([x[(n, d, NIGHT)]] if (n, d, NIGHT) in x else []) +
+                      ([x[(n, d, DAYNIGHT)]] if (n, d, DAYNIGHT) in x else [])]
+                if len(ew) >= 4:
+                    se2 = slack(f"ewin_{n}_{i}", 500)   # 【第5】準夜の短期偏り
+                    mdl.Add(sum(ew) - se2 <= 3)
+                if len(dw) >= 4:
+                    sd2 = slack(f"dwin_{n}_{i}", 500)   # 【第5】深夜の短期偏り
+                    mdl.Add(sum(dw) - sd2 <= 3)
+
     # 【休日数】詳細設定の「最低休日数」を確保（既定＝月の土日祝数）
     rest_cfg = data["settings"].get("rest_days", {})
     W = sum(1 for d in days if dtype[d] in ("sat", "sun") or d in holidays)
@@ -702,7 +750,7 @@ def solve(path, holidays, time_limit=60, prev_path=None):
             continue
         oc = mdl.NewIntVar(0, 31, f"off_{n}")
         mdl.Add(oc == sum(rvars))
-        dlo = slack(f"olo_{n}", 6000)          # 休日数不足は強く penalize（夜勤人数の次に優先）
+        dlo = slack(f"olo_{n}", 8000)          # 【第2優先】休日数不足
         mdl.Add(oc + dlo >= need)
 
     # 【追加】月に最低2回の2連休（5連休以上を取得している場合は免除）ソフト
