@@ -134,6 +134,24 @@ def settings_to_rows(settings):
     return out
 
 
+def save_settings_file(rows_by_table, path):
+    """編集した詳細設定だけを単独のExcelとして保存（次月に読み込む用）。"""
+    from openpyxl import Workbook
+    wb = Workbook()
+    wb.remove(wb.active)
+    write_settings_sheet(wb, rows_by_table)
+    wb.save(path)
+    return path
+
+
+def load_settings_file(path, known_names):
+    """詳細設定ファイル（または詳細設定シートを含むExcel）から設定を読む。"""
+    from openpyxl import load_workbook
+    from shift_core import parse_settings
+    wb = load_workbook(path, data_only=True)
+    return settings_to_rows(parse_settings(wb, known_names))
+
+
 def write_settings_sheet(wb, rows_by_table):
     """rows_by_table(各表の行リスト)を『詳細設定』シートとして wb に書き込む(既存は置換)。"""
     if "詳細設定" in wb.sheetnames:
@@ -159,3 +177,22 @@ def write_settings_sheet(wb, rows_by_table):
     for col, w in zip("ABCDEFGH", [16, 12, 10, 10, 10, 10, 8, 8]):
         cfg.column_dimensions[col].width = w
     return wb
+
+
+def save_settings_workbook(rows_by_table, path):
+    """編集した詳細設定だけを独立したExcelとして保存する（次月の読み込み用）。"""
+    from openpyxl import Workbook
+    wb = Workbook()
+    wb.remove(wb.active)
+    write_settings_sheet(wb, rows_by_table)
+    wb.save(path)
+    return path
+
+
+def load_settings_rows(path, known_names):
+    """保存した詳細設定ファイル（詳細設定シートを含む任意のExcel）から
+    編集用の行データを読み込む。"""
+    from openpyxl import load_workbook
+    from shift_core import parse_settings
+    wb = load_workbook(path, data_only=True)
+    return settings_to_rows(parse_settings(wb, known_names))

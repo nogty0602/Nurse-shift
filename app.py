@@ -25,7 +25,8 @@ except ImportError:
     HAS_JP = False
 
 # 計算は run_solver.py を別プロセスで実行するため、ここで solve/ortools は import しない
-from settings_io import settings_to_rows, write_settings_sheet, TABLE_DEFS, TABLE_ORDER
+from settings_io import (settings_to_rows, write_settings_sheet, save_settings_file,
+                         load_settings_file, TABLE_DEFS, TABLE_ORDER)
 from shift_core import (parse_settings, STATE_SYMBOL, OFF, DAY, EVE, NIGHT,
                         DAYNIGHT, GAI, TRAIN, TRAIN_HALF, TRAIN_2H)
 
@@ -46,6 +47,10 @@ with st.sidebar:
     up = st.file_uploader("希望届 (.xlsx)", type=["xlsx"])
     prev_up = st.file_uploader("前月の勤務表 (.xlsx・任意)", type=["xlsx"],
                                help="前月末の勤務を読み込み、月をまたぐ連勤・夜勤明け・並びを判定します。")
+    set_up = st.file_uploader("詳細設定ファイル (.xlsx・任意)", type=["xlsx"],
+                              help="前回出力した詳細設定を読み込みます。毎月の再入力が不要になります。")
+    save_settings = st.checkbox("詳細設定ファイルも出力する", value=True,
+                                help="生成後に、今回の詳細設定をダウンロードできます（次月に読み込めます）。")
     time_limit = st.slider("計算時間の上限(秒)", 30, 360, 180, step=30,
                            help="条件が厳しい月は長め(240〜360秒)にすると、夜勤人数と休日数の両立がしやすくなります。")
     run = st.button("シフトを生成", type="primary", use_container_width=True)
@@ -66,7 +71,18 @@ if "希望届" in wb.sheetnames:
         v = ws.cell(r, 1).value
         if v not in (None, ""):
             staff_names.add(str(v).strip())
-init_rows = settings_to_rows(parse_settings(wb, staff_names))
+if set_up is not None:
+    _sp = os.path.join(tempfile.gettempdir(), "settings_upload.xlsx")
+    with open(_sp, "wb") as f:
+        f.write(set_up.getbuffer())
+    try:
+        init_rows = load_settings_file(_sp, staff_names)
+        st.success("詳細設定ファイルを読み込みました（内容は下で編集できます）")
+    except Exception as e:
+        init_rows = settings_to_rows(parse_settings(wb, staff_names))
+        st.warning(f"詳細設定ファイルを読み込めませんでした（{e}）。希望届の設定を使用します")
+else:
+    init_rows = settings_to_rows(parse_settings(wb, staff_names))
 
 
 def parse_year_month(wb):
@@ -234,3 +250,13 @@ if run:
                            file_name="勤務表.xlsx",
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                            use_container_width=True)
+
+    if save_settings:
+        set_out = os.path.join(tempfile.gettempdir(), "settings_out.xlsx")
+        save_settings_file(edited, set_out)
+        with open(set_out, "rb") as f:
+            st.download_button("詳細設定ファイルをダウンロード（次月用）", f.read(),
+                               file_name=f"詳細設定_{int(year)}年{int(month):02d}月.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                               use_container_width=True)
+        st.caption("このファイルを次月の「詳細設定ファイル」に読み込ませると、同じ設定で作成できます。")
