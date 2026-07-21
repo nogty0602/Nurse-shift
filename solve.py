@@ -62,7 +62,13 @@ def build_allowed(name, dtype, dow, sym, shift_rules, phase_names=frozenset(), c
     return base, None                                    # 空欄
 
 
-def solve(path, holidays, time_limit=60, prev_path=None):
+def solve(path, holidays, time_limit=60, prev_path=None, adjust=None):
+    """adjust: 調整指示のリスト。
+    例) [{"staff":"C","rule":"rest2_after_run","hard":True},
+         {"staff":"A","rule":"fix","day":5,"symbol":"×"},
+         {"staff":"J","rule":"no_eve_run"}]
+    """
+    adjust = adjust or []
     data = parse(path, holidays)
     prev = {}
     prev_error = None
@@ -791,6 +797,96 @@ def solve(path, holidays, time_limit=60, prev_path=None):
             mdl.Add(big == 0)
         short = slack(f"twoff_{n}", 30)
         mdl.Add(sum(heads) + 2 * big + short >= 2)
+
+    # ===== 調整指示（生成後の手直し用）=====
+    for adj in adjust:
+        n = adj.get("staff")
+        rule = adj.get("rule")
+        if n not in names:
+            warnings.append(f"調整指示: スタッフ『{n}』が見つかりません")
+            continue
+        hard = bool(adj.get("hard", True))
+
+        if rule == "fix":                       # 指定日を指定の勤務に固定
+            d = int(adj.get("day", 0))
+            sym = str(adj.get("symbol", "")).strip()
+            st_ = FIXED.get(sym)
+            if d in days and st_ is not None:
+                if (n, d, st_) in x:
+                    mdl.Add(x[(n, d, st_)] == 1)
+                    warnings.append(f"調整指示: {n} の{d}日を『{sym}』に固定しました")
+                else:
+                    warnings.append(f"調整指示: {n} の{d}日は『{sym}』にできません（本人条件と矛盾）")
+            else:
+                warnings.append(f"調整指示: {n} の指定（{d}日 {sym}）が不正です")
+
+        elif rule == "rest2_after_run":          # 連勤の後は必ず2連休
+            k = int(adj.get("run", 5))           # 何連勤の後か
+            for i in range(len(days) - (k + 1)):
+                seg = [days[i + j] for j in range(k)]
+                wv = []
+                ok = True
+                for d_ in seg:
+                    h = has(n, d_, WORK)
+                    if not h:
+                        ok = False; break
+                    v = mdl.NewBoolVar(f"adjw_{n}_{d_}")
+                    mdl.Add(v == sum(h)); wv.append(v)
+                if not ok:
+                    continue
+                blk = mdl.NewBoolVar(f"adjblk_{n}_{i}")
+                for v in wv:
+                    mdl.Add(blk <= v)
+                mdl.Add(blk >= sum(wv) - (k - 1))
+                for off in (k, k + 1):
+                    rr = has(n, days[i + off], REST)
+                    if not rr:
+                        continue
+                    if hard:
+                        mdl.Add(sum(rr) >= blk)
+                    else:
+                        sadj = slack(f"adjr_{n}_{i}_{off}", 8000)
+                        mdl.Add(sum(rr) + sadj >= blk)
+            warnings.append(f"調整指示: {n} の{k}連勤後に2連休を{'厳守' if hard else '優先'}します")
+
+        elif rule == "no_eve_run":               # 準夜の連続・集中を抑える
+            lim = int(adj.get("limit", 2))       # 7日窓での上限
+            for i in range(len(days) - 6):
+                ew = [x[(n, days[i + j], EVE)] for j in range(7)
+                      if (n, days[i + j], EVE) in x]
+                if len(ew) > lim:
+                    if hard:
+                        mdl.Add(sum(ew) <= lim)
+                    else:
+                        sadj = slack(f"adje_{n}_{i}", 5000)
+                        mdl.Add(sum(ew) - sadj <= lim)
+            warnings.append(f"調整指示: {n} の準夜を7日間で{lim}回までに制限します")
+
+        elif rule == "max_nights":               # 夜勤の総回数上限
+            cap = int(adj.get("cap", 8))
+            tv = [x[(n, d, st_)] for d in days for st_ in (EVE, NIGHT, DAYNIGHT)
+                  if (n, d, st_) in x]
+            if tv:
+                if hard:
+                    mdl.Add(sum(tv) <= cap)
+                else:
+                    sadj = slack(f"adjn_{n}", 5000)
+                    mdl.Add(sum(tv) - sadj <= cap)
+            warnings.append(f"調整指示: {n} の夜勤を月{cap}回までに制限します")
+
+        elif rule == "min_rest":                 # 休日数の下限を個別指定
+            need = int(adj.get("days", 11))
+            rv = [x[(n, d, st_)] for d in days for st_ in (OFF, LEAVE)
+                  if (n, d, st_) in x]
+            if rv:
+                if hard:
+                    mdl.Add(sum(rv) >= need)
+                else:
+                    sadj = slack(f"adjrest_{n}", 8000)
+                    mdl.Add(sum(rv) + sadj >= need)
+            warnings.append(f"調整指示: {n} の休日を{need}日以上にします")
+        else:
+            warnings.append(f"調整指示: 不明な指示『{rule}』は無視しました")
 
     mdl.Minimize(sum(w * v for w, v in pen))
     solver = cp_model.CpSolver()

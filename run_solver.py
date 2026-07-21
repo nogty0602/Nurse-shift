@@ -21,8 +21,14 @@ def main():
     out_xlsx = sys.argv[4]
     result_pkl = sys.argv[5]
     prev_path = sys.argv[6] if len(sys.argv) > 6 and sys.argv[6] not in ("", "-") else None
+    adjust = []
+    if len(sys.argv) > 7 and sys.argv[7] not in ("", "-"):
+        import json
+        with open(sys.argv[7], encoding="utf-8") as fh:
+            adjust = json.load(fh)
 
-    r = solve(in_path, holidays, time_limit=time_limit, prev_path=prev_path)
+    r = solve(in_path, holidays, time_limit=time_limit, prev_path=prev_path,
+              adjust=adjust)
     payload = {"status": r["status"], "warnings": r["warnings"], "has_output": False}
     if r["assign"]:
         staff = {s["name"]: {"team": s.get("team"), "emp": s.get("emp"),

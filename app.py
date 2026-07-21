@@ -11,6 +11,7 @@ import re
 import sys
 import pickle
 import subprocess
+import json
 import calendar
 import datetime
 import tempfile
@@ -27,6 +28,7 @@ except ImportError:
 # 計算は run_solver.py を別プロセスで実行するため、ここで solve/ortools は import しない
 from settings_io import (settings_to_rows, write_settings_sheet, save_settings_file,
                          load_settings_file, TABLE_DEFS, TABLE_ORDER)
+from adjust_parse import parse_adjustments
 from shift_core import (parse_settings, STATE_SYMBOL, OFF, DAY, EVE, NIGHT,
                         DAYNIGHT, GAI, TRAIN, TRAIN_HALF, TRAIN_2H)
 
@@ -163,6 +165,23 @@ for key in TABLE_ORDER:
                             key=f"ed_{key}", column_config=COLCONF.get(key, {}))
         edited[key] = ed.values.tolist()
 
+st.subheader("調整指示（任意）")
+st.caption("できた勤務表を直したいとき、1行に1つ指示を書いて「シフトを生成」を押してください。")
+adjust_text = st.text_area(
+    "指示", height=110, key="adjust_text", label_visibility="collapsed",
+    placeholder=("例）\n"
+                 "Cの5連勤後に2連休を入れて\n"
+                 "Jの準夜が続かないように\n"
+                 "Aの夜勤を月8回までにして\n"
+                 "Hの休みを12日以上にして\n"
+                 "Bの18日を休みにして"))
+adjust_rules, adjust_unknown = parse_adjustments(adjust_text, staff_names)
+if adjust_rules:
+    st.info("解釈した指示: " + " / ".join(
+        f"{a['staff']}:{a['rule']}" for a in adjust_rules))
+if adjust_unknown:
+    st.warning("解釈できなかった行（無視されます）: " + " / ".join(adjust_unknown))
+
 if run:
     for _k in ("result", "schedule_bytes", "settings_bytes", "ym"):
         st.session_state.pop(_k, None)      # 前回の結果をクリア
@@ -177,6 +196,11 @@ if run:
         prev_path = os.path.join(tempfile.gettempdir(), "prev_schedule.xlsx")
         with open(prev_path, "wb") as f:
             f.write(prev_up.getbuffer())
+    adj_path = "-"
+    if adjust_rules:
+        adj_path = os.path.join(tempfile.gettempdir(), "adjust.json")
+        with open(adj_path, "w", encoding="utf-8") as f:
+            json.dump(adjust_rules, f, ensure_ascii=False)
     worker = os.path.join(os.path.dirname(os.path.abspath(__file__)), "run_solver.py")
     env = dict(os.environ)
     env["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
@@ -184,7 +208,7 @@ if run:
     with st.spinner("シフトを計算中…（別プロセスで実行）"):
         proc = subprocess.run(
             [sys.executable, worker, tmp_in, hol_str, str(time_limit), out_xlsx,
-             result_pkl, prev_path],
+             result_pkl, prev_path, adj_path],
             env=env, capture_output=True, text=True, timeout=int(time_limit) + 300)
 
     if proc.returncode != 0:
